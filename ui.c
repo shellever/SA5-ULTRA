@@ -58,6 +58,12 @@ uistat_t uistat = {
 #define BIT_PUSH    2
 #define BIT_DOWN1   1
 
+#ifdef SA5_ULTRA
+#define BUTTON_DOWN                 (1<<BIT_DOWN1)
+#define BUTTON_PUSH                 (1<<BIT_PUSH)
+#define BUTTON_UP                   (1<<BIT_UP1)
+#endif
+
 #define READ_PORT() palReadPort(GPIOA)
 #define BUTTON_MASK 0b1110
 
@@ -175,6 +181,13 @@ bool isFullScreenMode(void) {
 #endif
 }
 
+#ifdef SA5_ULTRA
+uint16_t get_buttons(void) {
+  uint16_t cur_button = READ_PORT() & BUTTON_MASK;
+  return cur_button;
+}
+#endif
+
 int btn_side(void)
 {
   uint16_t cur_button = READ_PORT() & BUTTON_MASK;
@@ -183,6 +196,7 @@ int btn_side(void)
   return false;
 }
 
+#ifndef SA5_ULTRA
 static int btn_check(void)
 {
   systime_t ticks;
@@ -254,7 +268,206 @@ static int btn_wait_release(void)
     }
   }
 }
+#endif
 
+
+#ifdef SA5_ULTRA
+// =================================================================================================
+// source ported from: https://github.com/MajicDesigns/MD_REncoder
+/**
+Set this to 1 to emit codes when the rotary encoder is at 11 as well as 00.
+The default is to emit codes only at 00.
+*/
+#define ENABLE_HALF_STEP  1   // 0/1
+
+//  Direction values returned by read() method
+#define DIR_NONE  0x00			// No complete step/movement
+#define DIR_CW    0x10			// Clockwise step/movement
+#define DIR_CCW   0x20  		// Counter-clockwise step/movement
+
+/*
+* The below state table has, for each state (row), the new state
+* to set based on the next encoder output. From left to right in,
+* the table, the encoder outputs are 00, 01, 10, 11, and the value
+* in that position is the new state to set.
+*/
+#define R_START 0x0
+
+#if ENABLE_HALF_STEP
+// Use the half-step state table (emits a code at 00 and 11)
+#define R_CCW_BEGIN   0x1
+#define R_CW_BEGIN    0x2
+#define R_START_M     0x3
+#define R_CW_BEGIN_M  0x4
+#define R_CCW_BEGIN_M 0x5
+
+const unsigned char ttable[][4] =
+{
+  // 00                  01              10            11
+  {R_START_M,           R_CW_BEGIN,     R_CCW_BEGIN,  R_START},           // R_START (00)
+  {R_START_M | DIR_CCW, R_START,        R_CCW_BEGIN,  R_START},           // R_CCW_BEGIN
+  {R_START_M | DIR_CW,  R_CW_BEGIN,     R_START,      R_START},           // R_CW_BEGIN
+  {R_START_M,           R_CCW_BEGIN_M,  R_CW_BEGIN_M, R_START},           // R_START_M (11)
+  {R_START_M,           R_START_M,      R_CW_BEGIN_M, R_START | DIR_CW},  // R_CW_BEGIN_M 
+  {R_START_M,           R_CCW_BEGIN_M,  R_START_M,    R_START | DIR_CCW}  // R_CCW_BEGIN_M
+};
+#else
+// Use the full-step state table (emits a code at 00 only)
+#define R_CW_FINAL   0x1
+#define R_CW_BEGIN   0x2
+#define R_CW_NEXT    0x3
+#define R_CCW_BEGIN  0x4
+#define R_CCW_FINAL  0x5
+#define R_CCW_NEXT   0x6
+
+const unsigned char ttable[][4] =
+{
+  // 00         01           10           11
+  {R_START,    R_CW_BEGIN,  R_CCW_BEGIN, R_START},           // R_START
+  {R_CW_NEXT,  R_START,     R_CW_FINAL,  R_START | DIR_CW},  // R_CW_FINAL
+  {R_CW_NEXT,  R_CW_BEGIN,  R_START,     R_START},           // R_CW_BEGIN
+  {R_CW_NEXT,  R_CW_BEGIN,  R_CW_FINAL,  R_START},           // R_CW_NEXT
+  {R_CCW_NEXT, R_START,     R_CCW_BEGIN, R_START},           // R_CCW_BEGIN
+  {R_CCW_NEXT, R_CCW_FINAL, R_START,     R_START | DIR_CCW}, // R_CCW_FINAL
+  {R_CCW_NEXT, R_CCW_FINAL, R_CCW_BEGIN, R_START}            // R_CCW_NEXT
+};
+#endif
+
+// Encoder value
+uint8_t _state;     // latest state for the encoder
+
+// Rotary Encoder Pinouts
+// A  - PA1
+// B  - PA3
+// SW - PA0
+// Grab state of input pins, determine new state from the pins
+// and state table, and return the emit bits (ie the generated event).
+// uint8_t MD_REncoder_read(void)
+uint8_t MD_REncoder_read(uint16_t cur_button)
+{
+  uint8_t pinstate = 0;
+  //uint16_t cur_button = get_buttons();
+
+  //uint8_t pinstate = (digitalRead(board::ENC_B) << 1) | digitalRead(board::ENC_A);
+
+  if (cur_button & BUTTON_DOWN) {
+    pinstate |= 0x01;
+  }
+
+  if (cur_button & BUTTON_UP) {
+    pinstate |= 0x02;
+  }
+
+  _state = ttable[_state & 0xf][pinstate];
+
+  return (_state & 0x30);
+
+  // return pinstate;
+}
+
+
+// rotary encoder event
+uint8_t re_event;
+
+// TODO: speedup marker moving using encoder
+// void REncoder_scan(void)
+void REncoder_scan(uint16_t cur_button)
+{
+  uint8_t dir_state;
+
+  // dir_state = MD_REncoder_read();
+  dir_state = MD_REncoder_read(cur_button);
+  if (dir_state != DIR_NONE) {
+    if (dir_state == DIR_CW) {
+      re_event |= EVT_UP;
+    } else {//if (dir_state == DIR_CCW) {
+      re_event |= EVT_DOWN;
+    }
+
+    operation_requested |= OP_LEVER;    // first down in one press
+  }
+  // else {
+  //   operation_requested = OP_NONE;
+  // }
+}
+
+
+static uint16_t btn_check(void)
+{
+  uint8_t event = re_event;
+
+  // chThdSleepMilliseconds(10);   // take no effect maybe
+  re_event = 0;
+
+  return event;
+}
+
+
+static uint16_t btn_wait_release(void)
+{
+  uint8_t event;
+  systime_t timeout = chVTGetSystemTimeX() + MS2ST(80);//80/100
+
+  while (TRUE) {
+    systime_t ticks = chVTGetSystemTimeX();
+    if (ticks > timeout) {
+      return 0;
+    }
+
+    event = re_event;
+    if (event != 0) {
+      re_event = 0;
+      return event;
+    }
+
+    chThdSleepMilliseconds(2);  //5/10
+  }
+}
+
+
+// push button state
+uint8_t last_push_btn_state;
+
+void push_btn_scan(uint8_t cur_btn)
+{
+  static uint8_t counter_20ms = 0;
+  uint8_t cur_push_btn_state = 0;
+  uint8_t push_btn_press;
+
+  counter_20ms++;
+  if (counter_20ms < 4) {
+    return;
+  }
+  counter_20ms = 0;
+
+
+  //if (!(cur_btn & BUTTON_PUSH)) {
+  if (cur_btn & BUTTON_PUSH) {
+    cur_push_btn_state = 0x01;
+  }
+
+  // button press trigger
+  push_btn_press = (last_push_btn_state ^ cur_push_btn_state) & cur_push_btn_state;
+  last_push_btn_state = cur_push_btn_state;
+
+  if (push_btn_press) {
+    re_event |= EVT_BUTTON_SINGLE_CLICK;
+
+    operation_requested |= OP_LEVER;    // first down in one press
+  }
+}
+
+
+void button_encoder_scan(void)
+{
+  uint16_t cur_button = get_buttons();
+
+  REncoder_scan(cur_button);
+  push_btn_scan(cur_button);
+}
+
+// =================================================================================================
+#endif
 
 #define SOFTWARE_TOUCH
 //*******************************************************************************
@@ -538,6 +751,7 @@ touch_draw_test(void)
   ili9341_clear_screen();
   ili9341_drawstring("TOUCH PANEL, DRAW LINES, PRESS BUTTON TO FINISH", OFFSETX, LCD_HEIGHT - FONT_GET_HEIGHT);
 
+#ifndef SA5_ULTRA
   int old_button_state = 0;
   lcd_set_font(FONT_NORMAL);
   while (touch_check() != EVT_TOUCH_PRESSED) {
@@ -548,6 +762,7 @@ touch_draw_test(void)
     }
 
   }
+#endif
   lcd_set_font(FONT_SMALL);
   do {
     if (touch_check() == EVT_TOUCH_PRESSED){
@@ -625,7 +840,21 @@ show_version(void)
   ili9341_drawstring_7x13(info_about[i++], x , y);
   while (info_about[i]) {
     do {shift>>=1; y+=5;} while (shift&1);
+
+#ifdef SA5_ULTRA
+    const char *info_line = info_about[i++];
+
+    if (i - 1 == 4) {             // "Version: tinySA4_v1.4-156-gceb315d"
+      char version_buff[48] = {0};
+      //memset(version_buff, '\0', 48);
+      memcpy(version_buff, info_line, 9);         // "Version: "
+      memcpy(&version_buff[9], &info_line[9+8], strlen(info_line) - 9 - 8); // "v1.4-156-gceb315d"
+      info_line = version_buff;
+    }
+    ili9341_drawstring_7x13(info_line, x, y+=bFONT_STR_HEIGHT+2-5);
+#else
     ili9341_drawstring_7x13(info_about[i++], x, y+=bFONT_STR_HEIGHT+2-5);
+#endif
   }
   lcd_set_font(FONT_NORMAL);
   lcd_printf(x, y+=bFONT_STR_HEIGHT, "HW Version:%s (%d) %s", get_hw_version_text(), adc1_single_read(0), (si5351_available?"SI5351":""));
@@ -715,7 +944,7 @@ select_lever_mode(int mode)
   }
 }
 
-// type of menu item 
+// type of menu item
 enum {
   MT_NONE,                      // sentinel menu
 //  MT_BLANK,                     // blank menu (nothing draw)
@@ -806,7 +1035,7 @@ static UI_FUNCTION_CALLBACK(menu_marker_op_cb)
     break;
 #ifdef __VNA__
   case 4: /* MARKERS->EDELAY */
-    { 
+    {
       if (uistat.current_trace == -1)
         break;
       float (*array)[2] = measured[trace[uistat.current_trace].channel];
@@ -1602,11 +1831,13 @@ static UI_FUNCTION_ADV_CALLBACK(menu_internals_acb)
     return;
   }
   if (unlock_internals != 5432) {
+#ifndef DISABLE_INTERNAL_ACCESS_CODE
     kp_help_text = "Internals access code";
     ui_mode_keypad(KM_CODE);
     if (uistat.value != 5432) {
       return;
     }
+#endif // DISABLE_INTERNAL_ACCESS_CODE
     unlock_internals = 5432;
   }
   menu_push_submenu(menu_settings2);
@@ -2740,6 +2971,7 @@ static UI_FUNCTION_ADV_CALLBACK(menu_ultra_acb)
     b->icon = config.ultra == 0 ? BUTTON_ICON_NOCHECK : BUTTON_ICON_CHECK;
     return;
   }
+#ifndef DISABLE_ULTRA_UNLOCK_CODE
   if (!config.ultra) {
     drawMessageBox("Info", "Visit tinysa.org/ultra for unlock code", 2000);
 
@@ -2748,6 +2980,7 @@ static UI_FUNCTION_ADV_CALLBACK(menu_ultra_acb)
     if (uistat.value != 4321)
       return;
   }
+#endif // DISABLE_ULTRA_UNLOCK_CODE
   config.ultra = !config.ultra;
   config_save();
   reset_settings(M_LOW);
@@ -2779,6 +3012,7 @@ static UI_FUNCTION_CALLBACK(menu_clearconfig_cb)
 {
   (void)data;
   (void)item;
+#ifndef DISABLE_CLEAR_UNLOCK_CODE
   kp_help_text = "Clear unlock code";
   ui_mode_keypad(KM_CODE);
   if (uistat.value != 1234) {
@@ -2786,6 +3020,7 @@ static UI_FUNCTION_CALLBACK(menu_clearconfig_cb)
     redraw_request|= REDRAW_AREA;
     return;
   }
+#endif // DISABLE_CLEAR_UNLOCK_CODE
   clear_all_config_prop_data();
 #ifndef TINYSA4
 #define SCB_AIRCR_VECTKEYSTAT_LSB 16
@@ -7312,7 +7547,11 @@ lever_move_marker(int status)
       markers[active_marker].frequency = getFrequency(idx);
       redraw_marker(active_marker);
       markers[active_marker].mtype &= ~M_TRACKING;    // Disable tracking when dragging marker
+      #ifdef SA5_ULTRA
+      step += 3;
+      #else
       step++;
+      #endif
     }
     status = btn_wait_release();
   } while (status != 0);
@@ -7432,7 +7671,7 @@ ui_process_normal_lever(void)
       case LM_SEARCH: lever_search_marker(status); break;
       case LM_CENTER: lever_move(status, FREQ_IS_STARTSTOP() ? ST_START : ST_CENTER); break;
       case LM_SPAN:
-        if (FREQ_IS_CW()) 
+        if (FREQ_IS_CW())
           lever_zoom_time(status);
         else
           lever_move(status, FREQ_IS_STARTSTOP() ? ST_STOP : ST_SPAN);
@@ -7461,6 +7700,9 @@ ui_process_listen_lever(void)
 static void
 ui_process_menu_lever(void)
 {
+#ifdef SA5_ULTRA
+  static uint8_t lever_side_count = 0;
+#endif
   // Flag show, can close menu if user come out from it
   // if false user must select some thing
   const menuitem_t *menu = menu_stack[menu_current_level];
@@ -7480,8 +7722,21 @@ ui_process_menu_lever(void)
     if (status & EVT_DOWN) selection--;
     // not close if type = form menu
     if ((uint16_t)selection >= count && !(menu[0].type & MT_FORM)){
-      ui_mode_normal();
-      return;
+#ifdef SA5_ULTRA
+      lever_side_count++;
+      if (lever_side_count >= 5) {
+        lever_side_count = 0;
+#endif
+        ui_mode_normal();
+        return;
+#ifdef SA5_ULTRA
+      } else {
+        if (status & EVT_UP  ) selection--;
+        if (status & EVT_DOWN) selection++;
+      }
+    } else {
+      lever_side_count = 0;
+#endif
     }
     ensure_selection();
     draw_menu_mask(mask|(1<<selection));
@@ -7649,7 +7904,9 @@ ui_process_keypad(void)
           selection = 0;
         draw_keypad_button(old);
         draw_keypad_button(selection);
+        #ifndef SA5_ULTRA
         chThdSleepMilliseconds(100);
+        #endif
       } while ((status = btn_wait_release()) != 0);
     }
 
@@ -8229,7 +8486,9 @@ void
 ui_init()
 {
   // Activates the EXT driver 1.
+#ifndef SA5_ULTRA
   extStart(&EXTD1, &extcfg);
+#endif
   // Init touch subsystem
   touch_init();
 }

@@ -77,7 +77,7 @@
 #define __FAST_SWEEP__            // Pre-fill SI4432 RSSI buffer  to get fastest sweep in zero span mode
 // #define __AUDIO__
 #define __SPUR__                  // Does spur reduction by shifting IF
-#define __USE_SERIAL_CONSOLE__  // Enable serial I/O connection (need enable HAL_USE_SERIAL as TRUE in halconf.h)
+// #define __USE_SERIAL_CONSOLE__  // Enable serial I/O connection (need enable HAL_USE_SERIAL as TRUE in halconf.h)
 #ifdef __USE_SERIAL_CONSOLE__
 //#if (HAL_USE_SERIAL != TRUE)
 //#error "HAL_USE_SERIAL must be set to true"
@@ -135,6 +135,23 @@
 #ifdef __BANDS__
 #define __PWM__
 #endif
+
+#ifdef TINYSA4
+#define SA5_ULTRA
+#endif
+#ifdef SA5_ULTRA
+#define DISABLE_ULTRA_UNLOCK_CODE     // ultra unlock code (default is 4321)
+#define DISABLE_INTERNAL_ACCESS_CODE  // internal access code (default is 5432)
+#define DISABLE_CLEAR_UNLOCK_CODE     // clear unlock code (default is 1234)
+
+#define DISPLAY_INVERSION_ON_FORCE     1
+#define ENABLE_LPF_TEST_LEVEL_IN_SELF_TEST  // display lpf_test_level value in self test
+
+#endif
+
+#define BATTERY_LIMIT_LEVEL_IN_SELF_TEST    3900
+
+#define REPO_URL    "https://github.com/erikkaashoek"
 
 
 #ifdef TINYSA3
@@ -1108,7 +1125,7 @@ typedef uint16_t pixel_t;
 [LCD_GRID_COLOR       ] = RGB565(128,128,128), \
 [LCD_MENU_COLOR       ] = RGB565(230,230,230), \
 [LCD_MENU_TEXT_COLOR  ] = RGB565(  0,  0,  0), \
-[LCD_MENU_ACTIVE_COLOR] = RGB565(210,210,210), \
+[LCD_MENU_ACTIVE_COLOR] = RGB565(180,180,180), \
 [LCD_TRACE_1_COLOR    ] = RGB565(255,255,  0), \
 [LCD_TRACE_2_COLOR    ] = RGB565( 64,255, 64), \
 [LCD_TRACE_3_COLOR    ] = RGB565(255,  0,255), \
@@ -1117,7 +1134,7 @@ typedef uint16_t pixel_t;
 [LCD_LOW_BAT_COLOR    ] = RGB565(255,  0,  0), \
 [LCD_TRIGGER_COLOR    ] = RGB565(  0,  0,255), \
 [LCD_RISE_EDGE_COLOR  ] = RGB565(255,255,255), \
-[LCD_FALLEN_EDGE_COLOR] = RGB565(128,128,128), \
+[LCD_FALLEN_EDGE_COLOR] = RGB565( 90, 90, 90), \
 [LCD_SWEEP_LINE_COLOR ] = RGB565(  0,255,  0), \
 [LCD_BW_TEXT_COLOR    ] = RGB565(128,128,128), \
 [LCD_INPUT_TEXT_COLOR ] = RGB565(  0,  0,  0), \
@@ -1559,6 +1576,12 @@ typedef struct {
 
 extern void ui_init(void);
 extern void ui_process(void);
+
+// uint16_t get_buttons(void);
+// uint8_t MD_REncoder_read(void);
+// void REncoder_scan(void);
+void button_encoder_scan(void);
+
 int current_menu_is_form(void);
 extern float nf_gain;
 extern const char * const averageText[];

@@ -517,7 +517,7 @@ void ili9341_init(void)
     chThdSleepMilliseconds(2);
   }
 #ifdef TINYSA4
-  if ((hwid % 100) >= 2) {
+  if (DISPLAY_INVERSION_ON_FORCE || (hwid % 100) >= 2) {
     uint8_t data[] = {0};
     send_command(0x21, 1, data);
   }

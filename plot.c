@@ -1646,7 +1646,21 @@ static void trace_print_value_string(     // Only used at one place
 #else
   if (bold) format++; // Skip small prefix for bold output
 #endif
+#ifdef ENABLE_LPF_TEST_LEVEL_IN_SELF_TEST
+  extern int test_step;
+  extern float lpf_test_level;
+  extern float peakLevel;
+
+  if (test_step == 9) {
+    format = FONT_s"%s %.1f%s lpf_test_level:%.1f delta:%.1f";
+    format++; // Skip small prefix for bold output
+    cell_printf(xpos, ypos, format, buf2, v, unit_string[unit_index], lpf_test_level, fabsf(peakLevel-lpf_test_level));
+  } else {
+    cell_printf(xpos, ypos, format, buf2, v, unit_string[unit_index], (mtype & M_DELTA?"c":"") , (mtype & M_NOISE?"/Hz":""), (mtype & M_AVER?"/T":""));
+  }
+#else
   cell_printf(xpos, ypos, format, buf2, v, unit_string[unit_index], (mtype & M_DELTA?"c":"") , (mtype & M_NOISE?"/Hz":""), (mtype & M_AVER?"/T":""));
+#endif
 #ifdef __LEVEL_METER__
   if (level_text[0] == 0){
     plot_printf(level_text, sizeof(level_text), &format[3], v, unit_string[unit_index], (mtype & M_DELTA?"c":"") , (mtype & M_NOISE?"/Hz":"") ,(mtype & M_AVER?"/T":""));
@@ -1968,6 +1982,10 @@ draw_frequencies(void)
 #endif
 }
 
+bool batt_charger_check(void) {
+	return !(palReadPort(GPIOA)&(1<<GPIOA_BATT_CHG_STATE));
+}
+
 // Draw battery level
 #define BATTERY_TOP_LEVEL       4200
 #define BATTERY_BOTTOM_LEVEL    3300
@@ -2038,6 +2056,31 @@ static const uint8_t sd_icon [] = {
   ili9341_blitBitmap(7, BATTERY_START, 8, x, string_buf);
   plot_printf((char*)string_buf, sizeof string_buf, "%.2fv", vbat/1000.0);
   ili9341_drawstring((char*)string_buf, 1, BATTERY_START+x+3);
+
+  static const uint8_t chg_icon[] = {
+    0b00000000,
+    0b00010000,
+    0b00010000,
+    0b00110000,
+    0b00110000,
+    0b01110000,
+    0b11111110,
+    0b00011100,
+    0b00011000,
+    0b00011000,
+    0b00010000,
+    0b00010000,
+    0b00000000
+  };
+  if (batt_charger_check()) {
+    // Set charget status color
+    ili9341_set_foreground(LCD_TRACE_1_COLOR);      // yellow
+    // Draw charger status bitmap
+    ili9341_blitBitmap(17, BATTERY_START+4, 8, 13, chg_icon);    // 7+8+2
+  } else {
+    ili9341_set_background(LCD_BG_COLOR);
+    ili9341_fill(17, BATTERY_START+4, 8, 13);
+  }
 }
 
 void

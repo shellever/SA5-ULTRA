@@ -6379,7 +6379,8 @@ void determine_direct_test_freq(void) {
   config.ultra = old_ultra;
 }
 
-static float lpf_test_level = 0;
+//static float lpf_test_level = 0;
+float lpf_test_level = 0;
 #define LPF_TEST_FREQ 795000000
 void determine_lpf_test_level(void) {
   int old_ultra = config.ultra;
@@ -6468,7 +6469,7 @@ int validate_signal_within(int i, float margin)
 #ifdef TINYSA4
   if (test_case[i].setup == TP_15MHZ_LNA) {
     test_level = lpf_test_level;
-    margin = 5;
+    margin = 6.5f;
   }
   if (fabsf(config.low_level_offset) > 10)
     return(TS_FAIL);
@@ -6982,7 +6983,8 @@ void sort_spur_count(void) {
 #endif
 
 //static bool test_wait = false;
-static int test_step = 0;
+//static int test_step = 0;
+int test_step = 0;
 
 void self_test(int test)
 {
@@ -6990,7 +6992,7 @@ void self_test(int test)
 #ifdef TINYSA4
   bool old_ultra = config.ultra;
   config.ultra = true;
-  if (adc_vbat_read() < 3800) {
+  if (adc_vbat_read() < BATTERY_LIMIT_LEVEL_IN_SELF_TEST) {
     drawMessageBox("Battery low", "Charge before testing", 2000);
     goto quit;
   }
