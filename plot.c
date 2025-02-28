@@ -1349,7 +1349,7 @@ draw_all(bool flush)
     draw_all_cells(flush);
 #ifdef __SCROLL__
   //  START_PROFILE
-  if (setting.waterfall)
+  if (setting.waterfall && !(redraw_request & REDRAW_INBETWEEN))
     update_waterfall();
   //  STOP_PROFILE
 #endif
@@ -1652,11 +1652,14 @@ static void trace_print_value_string(     // Only used at one place
   extern float peakLevel;
 
   if (test_step == 9) {
-    format = FONT_s"%s %.1f%s lpf_test_level:%.1f delta:%.1f";
-    format++; // Skip small prefix for bold output
-    cell_printf(xpos, ypos, format, buf2, v, unit_string[unit_index], lpf_test_level, fabsf(peakLevel-lpf_test_level));
+    format = FONT_s "%s %.1f%s lpf_test_level:%.1f delta:%.1f";
+    format++;  // Skip small prefix for bold output
+    cell_printf(xpos, ypos, format, buf2, v, unit_string[unit_index], lpf_test_level,
+                fabsf(peakLevel - lpf_test_level));
   } else {
-    cell_printf(xpos, ypos, format, buf2, v, unit_string[unit_index], (mtype & M_DELTA?"c":"") , (mtype & M_NOISE?"/Hz":""), (mtype & M_AVER?"/T":""));
+    cell_printf(xpos, ypos, format, buf2, v, unit_string[unit_index],
+                (mtype & M_DELTA ? "c" : ""), (mtype & M_NOISE ? "/Hz" : ""),
+                (mtype & M_AVER ? "/T" : ""));
   }
 #else
   cell_printf(xpos, ypos, format, buf2, v, unit_string[unit_index], (mtype & M_DELTA?"c":"") , (mtype & M_NOISE?"/Hz":""), (mtype & M_AVER?"/T":""));
@@ -1850,7 +1853,7 @@ static void cell_draw_marker_info(int x0, int y0)
       j = 2;
       int xpos = 1 + (j%2)*(WIDTH/2) + CELLOFFSETX - x0;
       int ypos = 1 + (j/2)*(16) - y0;
-      cell_printf(xpos, ypos, FONT_s"OIP3: %4.1fdB", ip);
+      cell_printf(xpos, ypos, FONT_s"OIP3: %4.1fdBm", ip);
 #ifdef __LEVEL_METER__
       plot_printf(level_text, sizeof(level_text), "%4.1f", ip);
 #endif
@@ -1860,7 +1863,7 @@ static void cell_draw_marker_info(int x0, int y0)
       j = 3;
       xpos = 1 + (j%2)*(WIDTH/2) + CELLOFFSETX - x0;
       ypos = 1 + (j/2)*(16) - y0;
-      cell_printf(xpos, ypos, FONT_s"OIP3: %4.1fdB", ip);
+      cell_printf(xpos, ypos, FONT_s"OIP3: %4.1fdBm", ip);
       break;
     }
 #if 0
@@ -1983,7 +1986,7 @@ draw_frequencies(void)
 }
 
 bool batt_charger_check(void) {
-	return !(palReadPort(GPIOA)&(1<<GPIOA_BATT_CHG_STATE));
+  return !(palReadPort(GPIOA) & (1 << GPIOA_BATT_CHG_STATE));
 }
 
 // Draw battery level
@@ -2058,28 +2061,30 @@ static const uint8_t sd_icon [] = {
   ili9341_drawstring((char*)string_buf, 1, BATTERY_START+x+3);
 
   static const uint8_t chg_icon[] = {
-    0b00000000,
-    0b00010000,
-    0b00010000,
-    0b00110000,
-    0b00110000,
-    0b01110000,
-    0b11111110,
-    0b00011100,
-    0b00011000,
-    0b00011000,
-    0b00010000,
-    0b00010000,
-    0b00000000
+      0b00000000,
+      0b00010000,
+      0b00010000,
+      0b00110000,
+      0b00110000,
+      0b01110000,
+      0b11111110,
+      0b00011100,
+      0b00011000,
+      0b00011000,
+      0b00010000,
+      0b00010000,
+      0b00000000
+
   };
+
   if (batt_charger_check()) {
     // Set charget status color
-    ili9341_set_foreground(LCD_TRACE_1_COLOR);      // yellow
+    ili9341_set_foreground(LCD_TRACE_1_COLOR);  // yellow
     // Draw charger status bitmap
-    ili9341_blitBitmap(17, BATTERY_START+4, 8, 13, chg_icon);    // 7+8+2
+    ili9341_blitBitmap(17, BATTERY_START + 4, 8, 13, chg_icon);  // 7+8+2
   } else {
     ili9341_set_background(LCD_BG_COLOR);
-    ili9341_fill(17, BATTERY_START+4, 8, 13);
+    ili9341_fill(17, BATTERY_START + 4, 8, 13);
   }
 }
 
@@ -2157,10 +2162,20 @@ int display_test(void)
 #endif
 
 static void update_waterfall(void){
-  int i;
+  int i = CHART_BOTTOM-1;
   int w_width = area_width < WIDTH ? area_width : WIDTH;
 //  START_PROFILE;
-  for (i = CHART_BOTTOM-1; i >=graph_bottom+1; i--) {		// Scroll down
+#ifdef TINYSA4
+#define WATERFALL_MULTI (SPI_BUFFER_SIZE / WIDTH)
+  if (!auto_capture) {
+    for (i = CHART_BOTTOM-WATERFALL_MULTI; i>=graph_bottom; i-=WATERFALL_MULTI) {		// Scroll down WATERFALL_MULTI lines at once
+      ili9341_read_memory(OFFSETX, i, w_width, WATERFALL_MULTI, spi_buffer);
+      ili9341_bulk(OFFSETX, i+1, w_width, WATERFALL_MULTI);
+    }
+    i = CHART_BOTTOM-((CHART_BOTTOM-graph_bottom)/WATERFALL_MULTI)*WATERFALL_MULTI-1;
+  }
+#endif
+  for (; i >=graph_bottom; i--) {        // Scroll down
     ili9341_read_memory(OFFSETX, i, w_width, 1, spi_buffer);
     ili9341_bulk(OFFSETX, i+1, w_width, 1);
   }
@@ -2185,7 +2200,7 @@ static void update_waterfall(void){
   for (i=0; i< sweep_points; i++) {			// Add new topline
     uint16_t color;
 #ifdef _USE_WATERFALL_PALETTE
-    uint16_t y = _PALETTE_ALIGN(256 - graph_bottom + index[i]); // should be always in range 0 - graph_bottom
+    uint16_t y = _PALETTE_ALIGN(255 - graph_bottom + index[i]); // should be always in range 0 - graph_bottom
 //    y = (uint8_t)i;  // for test
     if (y > 255)            // at start the index_y_t table could be empty leading to negative y
       break;
@@ -2231,7 +2246,7 @@ static void update_waterfall(void){
       spi_buffer[j++] = color;
     }
   }
-  ili9341_bulk(OFFSETX, graph_bottom+1, w_width, 1);
+  ili9341_bulk(OFFSETX, graph_bottom, w_width, 1);
 //  STOP_PROFILE;
 }
 #if 0
@@ -2275,9 +2290,9 @@ static void update_level_meter(void){
 //  if (area_width-minimum_text_width > 0)
 //    ili9341_fill(OFFSETX+minimum_text_width, graph_bottom+1, area_width-minimum_text_width, CHART_BOTTOM - graph_bottom);
   ili9341_set_foreground(LCD_FG_COLOR);
-  int x_max = area_width+OFFSETX;
+  int x_max = area_width+OFFSETX-1;
 #ifdef TINYSA4
-#define BIG_SIZE 3
+  int  BIG_SIZE = (auto_capture?2:3);
 #else
 #define BIG_SIZE 2
 #endif

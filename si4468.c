@@ -2136,15 +2136,19 @@ void SI4432_Listen(int s)
 //  SI4463_WAIT_CTS;                // Wait for CTS
   do {
       uint8_t v = Si446x_readRSSI();
-      if (max < v)                // Peak
-        max = v;
-      if (count > 1000) {         // Decay
-        max -= 1;
-        count = 0;
-      } else
-        count++;
-      v = max - v;
-      DAC->DHR12R1 = dBm_to_volt[v] << 4; // Use DAC: CH1 and put 12 bit right aligned value
+      if (config.no_audio_agc) {
+        DAC->DHR12R1 = v << 4; // Use DAC: CH1 and put 12 bit right aligned value
+      } else {
+        if (max < v)                // Peak
+          max = v;
+        if (count > 1000) {         // Decay
+          max -= 1;
+          count = 0;
+        } else
+          count++;
+        v = max - v;
+        DAC->DHR12R1 = dBm_to_volt[v] << 4; // Use DAC: CH1 and put 12 bit right aligned value
+      }
     } while(operation_requested == OP_NONE);
   count = 0;
 //  dacPutChannelX(&DACD2, 0, 0);
