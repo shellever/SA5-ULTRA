@@ -50,8 +50,8 @@ Download arm cross tools from [here](https://developer.arm.com/tools-and-softwar
 
 Fetch source and submodule.
 
-    $ git clone https://github.com/erikkaashoek/tinySA.git
-    $ cd tinySA
+    $ git clone https://github.com/shellever/SA5-ULTRA.git
+    $ cd SA5-ULTRA
     $ git submodule update --init --recursive
 
 ## Build
