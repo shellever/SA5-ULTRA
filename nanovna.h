@@ -18,7 +18,7 @@
  */
 #include "ch.h"
 
-#ifdef TINYSA_F303
+//#ifdef TINYSA_F303
 #ifdef TINYSA_F072
 #error "Remove comment for #ifdef TINYSA_F303"
 #endif
@@ -26,7 +26,7 @@
 #define TINYSA4
 #endif
 #define TINYSA4_PROTO
-#endif
+//#endif
 
 #ifdef TINYSA_F072
 #ifdef TINYSA_F303
@@ -139,26 +139,28 @@
 #ifdef TINYSA4
 #define SA5_ULTRA
 #endif
-#ifdef SA5_ULTRA
-#define DISABLE_ULTRA_UNLOCK_CODE     // ultra unlock code (default is 4321)
-#define DISABLE_INTERNAL_ACCESS_CODE  // internal access code (default is 5432)
-#define DISABLE_CLEAR_UNLOCK_CODE     // clear unlock code (default is 1234)
 
-#define DISPLAY_INVERSION_ON_FORCE     1
+#ifdef SA5_ULTRA
+#define DISABLE_ULTRA_UNLOCK_CODE  // ultra unlock code (default is 4321)
+#define DISABLE_INTERNAL_ACCESS_CODE  // internal access code (default is 5432)
+#define DISABLE_CLEAR_UNLOCK_CODE  // clear unlock code (default is 1234)
+
+#define DISPLAY_INVERSION_ON_FORCE 1
 #define ENABLE_LPF_TEST_LEVEL_IN_SELF_TEST  // display lpf_test_level value in self test
 
 #endif
+#define BATTERY_LIMIT_LEVEL_IN_SELF_TEST 3900
 
-#define BATTERY_LIMIT_LEVEL_IN_SELF_TEST    3900
-
-#define REPO_URL    "https://github.com/erikkaashoek"
+#define REPO_URL "https://github.com/erikkaashoek"
 
 
 #ifdef TINYSA3
+typedef uint32_t freq_t;
 #define VARIANT(X,Y) (X)
 #define DEFAULT_IF  433800000
 #define DEFAULT_SPUR_IF 434000000
 #define DEFAULT_MAX_FREQ    350000000
+#define NORMAL_MAX_FREQ DEFAULT_MAX_FREQ
 #define MAX_LO_FREQ         959800000UL
 #define MIN_LO_FREQ         240000000UL
 #define MIN_BELOW_LO         550000000UL
@@ -168,18 +170,22 @@
 #define HIGH_MAX_FREQ_MHZ   959
 #endif
 #ifdef TINYSA4
+typedef uint64_t freq_t;
 #define FREQ_MULTIPLIER 100         // Multiplier of the 30MHz reference to get accurate frequency correction
 #define VARIANT(X,Y) (Y)
 #define DEFAULT_IF  ((freq_t)977400000)
-#define DEFAULT_SPUR_OFFSET ((freq_t)(actual_rbw_x10 > 3000 ? 1500000 : 1000000))
+#define DEFAULT_IF_PLUS  ((freq_t)1070100000)
+extern uint16_t hw_if;
+#define DEFAULT_SPUR_OFFSET ((freq_t)(actual_rbw_x10 >= 3000 ? 1500000 : 1000000))
 #define STATIC_DEFAULT_SPUR_OFFSET ((freq_t) 1500000)
-#define DEFAULT_MAX_FREQ    ((freq_t) 800000000)
+extern char *hw_text;
+
 #define MAX_LOW_OUTPUT_FREQ ((freq_t)1130000000)
 #define HIGH_MIN_FREQ_MHZ   136// 825
 #define HIGH_MAX_FREQ_MHZ   1130
 #define MINIMUM_DIRECT_FREQ  823000000ULL
-#define DEFAULT_ULTRA_THRESHOLD 700000000ULL
 #define ULTRA_AUTO         10000000000ULL // 10GHz
+
 
 //#define LOW_MAX_FREQ         800000000ULL
 //#define MIN_BELOW_LO         550000000ULL   // not used????
@@ -188,7 +194,8 @@
 #define DRIVE2_MAX_FREQ     2100000000ULL           // LO drive 2
 #define LOW_SHIFT_FREQ      2000000ULL              // shift IF to avoid zero Hz within IF
 
-#define USE_SHIFT2_RBW  4000        // use shift2_level_offset if actual_rbw_x10 is larger then this.
+#define USE_SHIFT2_RBW  8500        // shift2_level_offset rbw
+#define USE_SHIFT1_RBW  6000        // shift1_level_offset rbw
 #ifdef __NEW_SWITCHES__
 #define DIRECT_START config.direct_start
 #define DIRECT_STOP  config.direct_stop
@@ -233,7 +240,6 @@
 extern const char * const trc_channel_name[];
 
 #ifdef TINYSA3
-typedef uint32_t freq_t;
 #define HALF_FREQ 0x80000000UL
  typedef int32_t long_t;
  extern bool has_esd;
@@ -246,9 +252,8 @@ typedef uint32_t freq_t;
  #define CORRECTION_SIZE    3
 #endif
 #ifdef TINYSA4
- typedef uint64_t freq_t;
-#define HALF_FREQ 0x800000000000000ULL
  typedef int64_t long_t;
+#define HALF_FREQ 0x800000000000000ULL
  #define CORRECTION_POINTS  20       // Frequency dependent level correction table entries
  #define CORRECTION_LOW_IN   0
  #define CORRECTION_LNA      1
@@ -268,6 +273,8 @@ typedef uint32_t freq_t;
  extern freq_t MAX_LO_FREQ;
  extern freq_t MAX_ABOVE_IF_FREQ;           // Range to use for below IF
  extern freq_t MIN_BELOW_IF_FREQ;          // Range to use for below IF
+ extern freq_t ULTRA_THRESHOLD;
+ extern freq_t NORMAL_MAX_FREQ;
  extern int max2871;
  extern void set_freq_boundaries(void);
 #endif
@@ -324,6 +331,7 @@ void resume_once(uint16_t c);
 #ifdef TINYSA4
 void set_deviation(int d);
 void set_depth(int d);
+void set_avoid(int s);
 extern int LO_harmonic;
 #endif
 void toggle_mute(void);
@@ -495,7 +503,7 @@ void MenuDirty(void);
 void toggle_LNA(void);
 void toggle_AGC(void);
 void redrawHisto(void);
-void self_test(int);
+void selftest(int);
 void set_decay(int);
 void set_attack(int);
 void set_noise(int);
@@ -621,7 +629,7 @@ extern uint16_t graph_bottom;
 #define SD_CARD_START   (LCD_HEIGHT-40-20)
 #define BATTERY_START   (LCD_HEIGHT-40)
 
-#define WIDTH  (LCD_WIDTH - 1 - OFFSETX)
+#define WIDTH  (LCD_WIDTH - OFFSETX)
 #define HEIGHT (GRIDY*NGRIDY)
 
 #define FREQUENCIES_XPOS1 OFFSETX
@@ -630,8 +638,8 @@ extern uint16_t graph_bottom;
 
 //
 #define CELLOFFSETX 0
-#define AREA_WIDTH_NORMAL  (CELLOFFSETX + WIDTH  + 1)
-#define AREA_HEIGHT_NORMAL (              HEIGHT + 1)
+#define AREA_WIDTH_NORMAL  (CELLOFFSETX + WIDTH)
+#define AREA_HEIGHT_NORMAL (              HEIGHT)
 
 #define GRID_X_TEXT       (AREA_WIDTH_NORMAL - 7*5)
 
@@ -834,6 +842,7 @@ typedef struct config {
   float shift1_level_offset;
   float shift2_level_offset;
   float shift3_level_offset;
+  float shift4_level_offset;
   float drive1_level_offset;
   float drive2_level_offset;
   float drive3_level_offset;
@@ -888,6 +897,7 @@ typedef struct config {
 #endif
 #ifdef TINYSA4
   uint8_t hide_21MHz;
+  uint8_t no_audio_agc;
 #endif
   float sweep_voltage;
   float switch_offset;
@@ -1008,6 +1018,7 @@ void markers_reset(void);
 #define REDRAW_BATTERY    (1<<4)
 #define REDRAW_AREA       (1<<5)
 #define REDRAW_TRIGGER    (1<<6)
+#define REDRAW_INBETWEEN  (1<<7)
 extern  uint16_t redraw_request;
 
 /*
@@ -1092,7 +1103,7 @@ typedef uint16_t pixel_t;
 [LCD_GRID_COLOR       ] = RGB565(128,128,128), \
 [LCD_MENU_COLOR       ] = RGB565(230,230,230), \
 [LCD_MENU_TEXT_COLOR  ] = RGB565(  0,  0,  0), \
-[LCD_MENU_ACTIVE_COLOR] = RGB565(210,210,210), \
+[LCD_MENU_ACTIVE_COLOR] = RGB565(180,180,180), \
 [LCD_TRACE_1_COLOR    ] = RGB565(255,255,  0), \
 [LCD_TRACE_2_COLOR    ] = RGB565( 64,255, 64), \
 [LCD_TRACE_3_COLOR    ] = RGB565(255, 64, 64), \
@@ -1101,7 +1112,7 @@ typedef uint16_t pixel_t;
 [LCD_LOW_BAT_COLOR    ] = RGB565(255,  0,  0), \
 [LCD_TRIGGER_COLOR    ] = RGB565(  0,  0,255), \
 [LCD_RISE_EDGE_COLOR  ] = RGB565(255,255,255), \
-[LCD_FALLEN_EDGE_COLOR] = RGB565(128,128,128), \
+[LCD_FALLEN_EDGE_COLOR] = RGB565(90, 90, 90), \
 [LCD_SWEEP_LINE_COLOR ] = RGB565(  0,255,  0), \
 [LCD_BW_TEXT_COLOR    ] = RGB565(128,128,128), \
 [LCD_INPUT_TEXT_COLOR ] = RGB565(  0,  0,  0), \
@@ -1125,7 +1136,7 @@ typedef uint16_t pixel_t;
 [LCD_GRID_COLOR       ] = RGB565(128,128,128), \
 [LCD_MENU_COLOR       ] = RGB565(230,230,230), \
 [LCD_MENU_TEXT_COLOR  ] = RGB565(  0,  0,  0), \
-[LCD_MENU_ACTIVE_COLOR] = RGB565(180,180,180), \
+[LCD_MENU_ACTIVE_COLOR] = RGB565(210,210,210), \
 [LCD_TRACE_1_COLOR    ] = RGB565(255,255,  0), \
 [LCD_TRACE_2_COLOR    ] = RGB565( 64,255, 64), \
 [LCD_TRACE_3_COLOR    ] = RGB565(255,  0,255), \
@@ -1134,7 +1145,7 @@ typedef uint16_t pixel_t;
 [LCD_LOW_BAT_COLOR    ] = RGB565(255,  0,  0), \
 [LCD_TRIGGER_COLOR    ] = RGB565(  0,  0,255), \
 [LCD_RISE_EDGE_COLOR  ] = RGB565(255,255,255), \
-[LCD_FALLEN_EDGE_COLOR] = RGB565( 90, 90, 90), \
+[LCD_FALLEN_EDGE_COLOR] = RGB565(128,128,128), \
 [LCD_SWEEP_LINE_COLOR ] = RGB565(  0,255,  0), \
 [LCD_BW_TEXT_COLOR    ] = RGB565(128,128,128), \
 [LCD_INPUT_TEXT_COLOR ] = RGB565(  0,  0,  0), \
@@ -1367,6 +1378,7 @@ typedef struct setting
 #define PRESET_NAME_LENGTH  10
   char preset_name[PRESET_NAME_LENGTH];
 #endif
+  bool  dBuV;
   int64_t test_argument;            // used for tests
   uint32_t checksum;            // must be last and at 4 byte boundary
 }setting_t;
@@ -1503,8 +1515,8 @@ typedef struct properties {
 
 //sizeof(properties_t) == 0x1200
 
-#define CONFIG_MAGIC  0x434f4e67
-#define SETTING_MAGIC 0x434f4e68
+#define CONFIG_MAGIC  0x434f4e6e
+#define SETTING_MAGIC 0x434f4e6d
 
 extern int16_t lastsaveid;
 //extern properties_t *active_props;
@@ -1580,6 +1592,7 @@ extern void ui_process(void);
 // uint16_t get_buttons(void);
 // uint8_t MD_REncoder_read(void);
 // void REncoder_scan(void);
+
 void button_encoder_scan(void);
 
 int current_menu_is_form(void);
@@ -1617,6 +1630,8 @@ extern int si5351_available;
 //#define OP_FREQCHANGE 0x04
 extern volatile uint8_t operation_requested;
 extern volatile uint8_t break_execute;
+extern volatile uint8_t abort_enabled;
+
 
 // lever_mode
 enum lever_mode {
@@ -1769,29 +1784,41 @@ extern const menuitem_t  menu_highoutputmode[];
 extern const menuitem_t  menu_mode[];
 extern void menu_push_submenu(const menuitem_t *submenu);
 
+#ifdef TINYSA4
+#define MAX_BACKUP_SIZE 16
+#define USED_BACKUP_SIZE 6
+#else
+#define MAX_BACKUP_SIZE 5
+#define USED_BACKUP_SIZE 4      // must be equal to sizeof(backup_t)
+#endif
+
+
 typedef struct {
-  freq_t    frequency0, frequency1;
-  uint8_t attenuation;
-  uint8_t reflevel;
-  uint8_t RBW;
-  uint8_t mode;
-  uint8_t checksum;
+  union {
+    uint32_t raw[USED_BACKUP_SIZE];     // checksum must be last byte
+    struct {
+      freq_t  frequency0, frequency1;
+      uint8_t attenuation;
+      uint8_t reflevel;
+      uint8_t RBW;
+      uint8_t mode;
+      int8_t external_gain;
+      uint8_t harmonic,dummy2;
+      uint8_t checksum;
+    } data;
+  };
 } backup_t;
 #pragma pack(pop)
 
 #define backup (*(uint32_t *)0x40002850)   // backup registers 5 * 32 bits
 
-#ifdef TINYSA4
-#define MAX_BACKUP_SIZE 16
-#define USED_BACKUP_SIZE 5
-#else
-#define MAX_BACKUP_SIZE 5
-#define USED_BACKUP_SIZE 3
-#endif
 
 #if USED_BACKUP_SIZE > MAX_BACKUP_SIZE
 #error "backup_t too large"
 #endif
+//#if sizeof(backup_t) != USED_BACKUP_SIZE  // does not work
+//#error "backup_t size incorrect"
+//#endif
 /*
  * misclinous
  */
@@ -1842,7 +1869,7 @@ void update_rbw(void);
 void set_fast_speedup(int);
 void set_faster_speedup(int);
 //extern int setting_measurement;
-void self_test(int);
+void selftest(int);
 //extern int setting_test;
 void wait_user(void);
 void calibrate(void);

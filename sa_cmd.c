@@ -193,6 +193,24 @@ VNA_SHELL_FUNCTION(cmd_lna)
     redraw_request |= REDRAW_CAL_STATUS | REDRAW_AREA;
   }
 }
+
+VNA_SHELL_FUNCTION(cmd_avoid)
+{
+  extern freq_t dynamic_spur_table[];       // Frequencies to be calculated
+  extern int dynamic_spur_table_size;
+  int m = generic_option_cmd("avoid", "auto|off|on|dump", argc, argv[0]);
+  if (m == 3) {
+    for (int i=0; i < dynamic_spur_table_size; i++)
+      shell_printf("%D\n",dynamic_spur_table[i]);
+  }
+  else if (m>=0) {
+    set_avoid(m);
+    if (m == 0)
+      toggle_debug_avoid();
+    redraw_request |= REDRAW_CAL_STATUS | REDRAW_AREA;
+  }
+}
+
 #endif
 #ifdef __ULTRA__
 VNA_SHELL_FUNCTION(cmd_ultra)
@@ -408,7 +426,7 @@ VNA_SHELL_FUNCTION(cmd_leveloffset)
 {
   //                                     0    1      2
 #ifdef TINYSA4
-  static const char cmd_mode_list[] = "low|switch|receive_switch|out_switch|lna|harmonic|shift|shift1|shift2|shift3|drive1|drive2|drive3|direct|direct_lna|ultra|ultra_lna|harmonic_lna|adf";
+  static const char cmd_mode_list[] = "low|switch|receive_switch|out_switch|lna|harmonic|shift|shift1|shift2|shift3|shift4|drive1|drive2|drive3|direct|direct_lna|ultra|ultra_lna|harmonic_lna|adf|direct_output|low_output";
 #else
   static const char cmd_mode_list[] = "low|high|switch|receive_switch";
 #endif
@@ -424,7 +442,7 @@ VNA_SHELL_FUNCTION(cmd_leveloffset)
 #endif
 #ifdef TINYSA4
     shell_printf(p, "low",          config.low_level_offset);
-    shell_printf(p, "low output",   config.low_level_output_offset);
+    shell_printf(p, "low_output",   config.low_level_output_offset);
     shell_printf(p, "switch",       config.switch_offset);
     shell_printf(p, "receive_switch",config.receive_switch_offset);
     shell_printf(p, "out_switch",   config.out_switch_offset);
@@ -435,6 +453,7 @@ VNA_SHELL_FUNCTION(cmd_leveloffset)
     shell_printf(p, "shift1",       config.shift1_level_offset);
     shell_printf(p, "shift2",       config.shift2_level_offset);
     shell_printf(p, "shift3",       config.shift3_level_offset);
+    shell_printf(p, "shift4",       config.shift4_level_offset);
     shell_printf(p, "drive1",       config.drive1_level_offset);
     shell_printf(p, "drive2",       config.drive2_level_offset);
     shell_printf(p, "drive3",       config.drive3_level_offset);
@@ -443,7 +462,7 @@ VNA_SHELL_FUNCTION(cmd_leveloffset)
     shell_printf(p, "ultra",        config.ultra_level_offset);
     shell_printf(p, "ultra_lna",    config.ultra_lna_level_offset);
     shell_printf(p, "adf",          config.adf_level_offset);
-    shell_printf(p, "direct output",config.direct_level_output_offset);
+    shell_printf(p, "direct_output",config.direct_level_output_offset);
 #endif
     return;
   }
@@ -473,15 +492,18 @@ VNA_SHELL_FUNCTION(cmd_leveloffset)
       case 7: config.shift1_level_offset = v; break;
       case 8: config.shift2_level_offset = v; break;
       case 9: config.shift3_level_offset = v; break;
-      case 10: config.drive1_level_offset = v; break;
-      case 11: config.drive2_level_offset = v; break;
-      case 12: config.drive3_level_offset = v; break;
-      case 13: config.direct_level_offset = v; break;
-      case 14: config.direct_lna_level_offset = v; break;
-      case 15: config.ultra_level_offset = v; break;
-      case 16: config.ultra_lna_level_offset = v; break;
-      case 17: config.harmonic_lna_level_offset = v; break;
-      case 18: config.adf_level_offset = v; break;
+      case 10: config.shift4_level_offset = v; break;
+      case 11: config.drive1_level_offset = v; break;
+      case 12: config.drive2_level_offset = v; break;
+      case 13: config.drive3_level_offset = v; break;
+      case 14: config.direct_level_offset = v; break;
+      case 15: config.direct_lna_level_offset = v; break;
+      case 16: config.ultra_level_offset = v; break;
+      case 17: config.ultra_lna_level_offset = v; break;
+      case 18: config.harmonic_lna_level_offset = v; break;
+      case 19: config.adf_level_offset = v; break;
+      case 20: config.direct_level_output_offset = v; break;
+      case 21: config.low_level_output_offset = v; break;
 #endif
       default: goto usage;
     }
@@ -580,17 +602,23 @@ VNA_SHELL_FUNCTION(cmd_rbw)
 
 VNA_SHELL_FUNCTION(cmd_if)
 {
+  char *t = "975M..979M";
   if (argc != 1 || argv[0][0] == '?') {
   usage:
 #ifdef TINYSA4
-  usage_printf("usage: if {975M..979M}\r\n%QHz\r\n", setting.frequency_IF);
+  if (hw_if)
+    t = "1067M..1073M";
+  usage_printf("usage: if {%s}\r\n%QHz\r\n", t, setting.frequency_IF);
 #else
     usage_printf("usage: if {433M..435M}\r\n%QHz\r\n", setting.frequency_IF);
 #endif
     return;
   }
   freq_t a = (freq_t)my_atoi(argv[0]);
-  if (a!= 0 &&( a < (DEFAULT_IF - (freq_t)2000000) || a>(DEFAULT_IF + (freq_t)2000000)))
+  freq_t f = DEFAULT_IF;
+  if (hw_if)
+    f = DEFAULT_IF_PLUS;
+  if (a!= 0 &&( a < (f - (freq_t)5000000) || a>(f + (freq_t)5000000)))
     goto usage;
   setting.auto_IF = false;
   set_IF(a);
@@ -1233,13 +1261,30 @@ VNA_SHELL_FUNCTION(cmd_correction)
   shell_printf("updated %d to %D %.1f\r\n", i, config.correction_frequency[m][i], config.correction_value[m][i]);
 }
 
+VNA_SHELL_FUNCTION(cmd_abort)
+{
+  static const char cmd_on_off[] = "off|on";
+  if (argc > 1) {
+    usage:
+    shell_printf("usage: abort [%s]\r\n", cmd_on_off);
+    return;
+  }
+  if (argc == 1) {
+    int i = get_str_index(argv[0], cmd_on_off);
+    if (i < 0)
+      goto usage;
+    abort_enabled = i;
+  } else
+    operation_requested = OP_CONSOLE;
+}
+
 VNA_SHELL_FUNCTION(cmd_scanraw)
 {
   freq_t start, stop;
   uint32_t points = sweep_points;
   uint8_t unbuffered = 0;
   if (argc < 2 || argc > 4) {
-    usage_printf("scanraw {start(Hz)} {stop(Hz)} [points] [unbuffered]\r\n");
+    usage_printf("scanraw {start(Hz)} {stop(Hz)} [points] [options]\r\n");
     return;
   }
 
@@ -1263,7 +1308,7 @@ VNA_SHELL_FUNCTION(cmd_scanraw)
   freq_t old_step = setting.frequency_step;
   float f_step = (stop-start)/ points;
   setting.frequency_step = (freq_t)f_step;
-
+again:
   operation_requested = false;
   dirty = true;
 //  adc_stop_analog_watchdog();
@@ -1282,7 +1327,7 @@ VNA_SHELL_FUNCTION(cmd_scanraw)
     buf[idx++] = 'x';
     buf[idx++] = (uint8_t)(val & 0xFF);
     buf[idx++] = (uint8_t)((val>>8) & 0xFF);
-    if (unbuffered || idx >= BUFFER_SIZE - 4) {
+    if ((unbuffered & 1) || idx >= BUFFER_SIZE - 4) {
       streamWrite(shell_stream, buf, idx);
       idx = 0;
     }
@@ -1295,6 +1340,8 @@ VNA_SHELL_FUNCTION(cmd_scanraw)
   buf[idx++] = '}';
   streamWrite(shell_stream, buf, idx);
 //  adc_start_analog_watchdog();
+  if ((unbuffered & 2) && !operation_requested)
+     goto again;
   ili9341_set_background(LCD_BG_COLOR);
   ili9341_fill(OFFSETX, CHART_BOTTOM+1, WIDTH, 1);
   setting.frequency_step = old_step;
