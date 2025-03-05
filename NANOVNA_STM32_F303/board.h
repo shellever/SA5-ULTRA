@@ -200,8 +200,8 @@
                                      PIN_OSPEED_2M(6) |          \
                                      PIN_OSPEED_2M(7) |          \
                                      PIN_OSPEED_2M(8U) | \
-                                     PIN_OSPEED_100M(9U) |          \
-                                     PIN_OSPEED_100M(10) |         \
+                                     PIN_OSPEED_2M(9U) |          \
+                                     PIN_OSPEED_2M(10) |         \
                                      PIN_OSPEED_100M(GPIOA_USB_DM) |     \
                                      PIN_OSPEED_100M(GPIOA_USB_DP) |     \
                                      PIN_OSPEED_100M(GPIOA_JTMS) |         \
@@ -232,8 +232,8 @@
                                      PIN_ODR_HIGH(6) |             \
                                      PIN_ODR_HIGH(7) |             \
                                      PIN_ODR_HIGH(8U) |     \
-                                     PIN_ODR_LOW(9) |             \
-                                     PIN_ODR_LOW(10) | \
+                                     PIN_ODR_HIGH(9) |             \
+                                     PIN_ODR_HIGH(10) | \
                                      PIN_ODR_HIGH(GPIOA_USB_DM) |   \
                                      PIN_ODR_HIGH(GPIOA_USB_DP) |   \
                                      PIN_ODR_HIGH(GPIOA_JTMS) |     \
