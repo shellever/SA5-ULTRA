@@ -34,7 +34,9 @@ int32_t frequencyExtra;
  */
 // If need run shell as thread (use more amount of memory fore stack), after
 // enable this need reduce spi_buffer size, by default shell run in main thread
-// #define VNA_SHELL_THREAD
+#ifdef TINYSA4
+#define VNA_SHELL_THREAD
+#endif
 
 static BaseSequentialStream *shell_stream;
 threads_queue_t shell_thread;
@@ -114,6 +116,8 @@ freq_t ULTRA_MAX_FREQ;           // Start of harmonic mode
 freq_t MAX_LO_FREQ;
 freq_t MAX_ABOVE_IF_FREQ;           // Range to use for below IF
 freq_t MIN_BELOW_IF_FREQ;          // Range to use for below IF
+freq_t ULTRA_THRESHOLD;
+freq_t NORMAL_MAX_FREQ;
 int max2871;
 #endif
 
@@ -130,6 +134,8 @@ systime_t last_auto_save = 0;
 
 #ifdef TINYSA4
 static THD_WORKING_AREA(waThread1, 1224);
+systime_t restart_set_time = 0;
+systime_t restart_interval = 0;
 #else
 static THD_WORKING_AREA(waThread1, 768);
 bool has_esd = false;
@@ -156,36 +162,41 @@ static THD_FUNCTION(Thread1, arg)
 //  START_PROFILE
     if (sweep_mode&(SWEEP_ENABLE|SWEEP_ONCE)) {
       backup_t b;
-      b.frequency0 = setting.frequency0;
-      b.frequency1 = setting.frequency1;
+      b.data.frequency0 = setting.frequency0;
+      b.data.frequency1 = setting.frequency1;
       if (setting.auto_attenuation)
-        b.attenuation = 0;
+        b.data.attenuation = 0;
       else
-        b.attenuation = setting.attenuate_x2+1;
+        b.data.attenuation = setting.attenuate_x2+1;
+      b.data.external_gain = setting.external_gain*2;
       if (setting.auto_reflevel || setting.unit != U_DBM)
-        b.reflevel = 0;
+        b.data.reflevel = 0;
       else
-      b.reflevel = setting.reflevel + 140;
+      b.data.reflevel = setting.reflevel + 140;
       if (setting.rbw_x10 == 0)
-        b.RBW = 0;
-      else
+        b.data.RBW = 0;
+      else {
 #ifdef TINYSA4
-        b.RBW = SI4463_rbw_selected+1;
+        b.data.RBW = SI4463_rbw_selected+1;
 #else
-        b.RBW = SI4432_rbw_selected+1;
+        b.data.RBW = SI4432_rbw_selected+1;
 #endif
-      b.mode = setting.mode;
-      b.checksum = 0;
+      }
+#ifdef TINYSA4
+        b.data.harmonic = setting.harmonic;
+#endif
+      b.data.mode = setting.mode;
+      b.data.checksum = 0;
       uint8_t *c = (uint8_t *)&b;
       int ci = sizeof(backup_t)-1;  // Exclude checksum
       uint8_t checksum = 0x55;
       while (ci--) {
         checksum ^= *c++;
       }
-      b.checksum = checksum;
+      b.data.checksum = checksum;
       uint32_t *f = (uint32_t *)&b;
       uint32_t *t = &backup;
-      int i = USED_BACKUP_SIZE+1;
+      int i = USED_BACKUP_SIZE;
       while (i--)
         *t++ = *f++;
 
@@ -206,6 +217,15 @@ static THD_FUNCTION(Thread1, arg)
           config._mode = old_mode;
         }
 #endif
+#ifdef __USE_RTC__
+        if (restart_set_time) {
+          if ( chVTGetSystemTimeX() - restart_set_time > restart_interval) {
+               chThdSleepMilliseconds(200);
+               NVIC_SystemReset();
+          }
+        }
+#endif
+
 
         if (sweep_once_count>1) {
           sweep_once_count--;
@@ -214,7 +234,7 @@ static THD_FUNCTION(Thread1, arg)
       }
     } else if (sweep_mode & SWEEP_SELFTEST) {
       // call from lowest level to save stack space
-      self_test(setting.test);
+      selftest(setting.test);
       completed = true;
 //      sweep_mode = SWEEP_ENABLE;
 #ifdef __SINGLE_LETTER__
@@ -244,8 +264,10 @@ static THD_FUNCTION(Thread1, arg)
       do {
         shell_function(shell_nargs - 1, &shell_args[1]);
         shell_function = 0;
+        if (operation_requested == OP_NONE) // Don't prompt if aborted
+          shell_printf(VNA_SHELL_PROMPT_STR);
         // Resume shell thread
-        osalThreadDequeueNextI(&shell_thread, MSG_OK);
+        if (!abort_enabled) osalThreadDequeueNextI(&shell_thread, MSG_OK);
       } while (shell_function);
       if (dirty) {
         if (MODE_OUTPUT(setting.mode))
@@ -404,6 +426,22 @@ static int get_str_index(const char *v, const char *list)
   return -1;
 }
 
+#ifdef __USE_RTC__
+VNA_SHELL_FUNCTION(cmd_restart)
+{
+  (void)argc;
+  (void)argv;
+  if (argc == 1) {
+    restart_interval = S2ST(my_atoi(argv[0]));
+    if (restart_interval) {
+      restart_set_time =  chVTGetSystemTimeX();
+      if (restart_set_time == 0)
+        restart_set_time = 1;
+    } else
+      restart_set_time = 0;
+  }
+}
+#endif
 
 
 VNA_SHELL_FUNCTION(cmd_pause)
@@ -1147,7 +1185,7 @@ config_t config = {
   .correction_value =
   {
    /* low */   {   12.2,   7.57,   4.46,   2.17,   0.36,   -0.36,  0,  -0.84,  -0.39,  0.5,    0.25,   1,  0.08,   0.48,   0.37,   1.53,   2.98,   4.74,   6.25,   8.73,   },
-   /* low lna */   {   11,     8.54,   6.32,   4.46,   3.18,   1.02,   0.69,   0.2,    -0.43,  -0.41,  0.58,   0.66,   -0.08,  0.58,   0.77,   1.7,    1.77,   3.55,   5.51,   7.99,   },
+     /* low lna */   {   11,     8.54,   6.32,   4.46,   3.18,   1.02,   0.69,   0.2,    -0.43,  -0.41,  0.58,   0.66,   -0.08,  0.58,   0.77,   1.7,    1.77,   3.55,   5.51,   7.99,   },
    /* ultra */ {   0,  0.58,   1.7,    4.53,   4.46,   3.23,   4.64,   6.29,   5.67,   7.03,   8.78,   7.04,   8.25,   11.42,  11.63,  13.29,  12.38,  12.58,  15.75,  15.93,  },
    /* ultra lna */ {   0,  0.49,   0.52,   1.26,   3.13,   2.68,   2.68,   3.45,   4.7,    6.2,    8.49,   11.54,  13.51,  15.82,  15.82,  18.66,  19.41,  22.6,   22.8,   28.1,   },
    /* direct */    {   35.12,  34.22,  32.41,  30,     21.7,   20.41,  16.45,  15.91,  14.86,  14.34,  11.63,  10.71,  8.88,   1.25,   0.629999999999999,  1.45,   0.59,   2.2,    3.79,   6.28,   },
@@ -1190,46 +1228,82 @@ config_t config = {
 };
 
 
-const int to_calibrate[6] = {9,10,11,12,13,14};
+// const int to_calibrate[6] = {9,10,11,12,13,14};
 
 //properties_t current_props;
 //properties_t *active_props = &current_props;
 #ifdef TINYSA4
 const freq_t v5_2_correction_frequency[CORRECTION_SIZE][CORRECTION_POINTS]=
 {
- /* low */  {   100000,     500000,     8000000,    40000000,   60000000,   70000000,   110000000,  300000000,  330000000,  420000000,  450000000,  460000000,  510000000,  560000000,  620000000,  710000000,  760000000,  800000000,  810000000,  830000000},
- /* low lna */   {   100000,     200000,     400000,     700000,     1000000,    2000000,    4000000,    30000000,   50000000,   210000000,  240000000,  260000000,  270000000,  300000000,  330000000,  510000000,  720000000,  790000000,  820000000,  830000000},
- /* ultra */ {   30000000,   700000000,  1900000000,     2600000000,     2800000000,     2850000000,     3200000000,     3750000000,     4300000000,     4600000000,     4900000000,     5000000000,     5300000000,     5600000000,     5750000000,     6000000000,     6450000000,     6700000000,     7050000000,     7250000000},
- /* ultra lna */ {   30000000,   700000000,  2050000000,     2300000000,     2600000000,     2800000000,     2900000000,     3100000000,     3550000000,     3850000000,     4400000000,     4800000000,     5000000000,     5200000000,     5400000000,     6000000000,     6200000000,     6450000000,     6550000000,     7250000000},
- /* direct */    {   140000000,  160000000,  180000000,  280000000,  300000000,  400000000,  420000000,  430000000,  510000000,  560000000,  823000000,  880000000,  930000000,  940000000,  960000000,  990000000,  1060000000,     1080000000,     1110000000,     1130000000},
- /* direct lna */    {   140000000,  180000000,  280000000,  300000000,  330000000,  400000000,  410000000,  430000000,  460000000,  470000000,  490000000,  550000000,  560000000,  823000000,  850000000,  870000000,  940000000,  960000000,  980000000,  1130000000,     },
- /* harm */  {   30000000,   6000000000,     6195991091,     6302895323,     6400890869,     6899777283,     7104677060,     7398663697,     7701559020,     7799554566,     8200445434,     8298440980,     8503340757,     8904231626,     9002227171,     9100222717,     9198218263,     9296213808,     9501113586,     9804008909,     },
- /* harm lna */  {   30000000,   6000000000,     6097995546,     6204899777,     6498886414,     6596881960,     6801781737,     7496659243,     7701559020,     7995545657,     8102449889,     8298440980,     8396436526,     8699331849,     8904231626,     9100222717,     9198218263,     9403118040,     9697104677,     10000000000,    },
- /* out */   {   10000,  30000,  100000,     200000,     600000,     5000000,    170000000,  250000000,  300000000,  390000000,  490000000,  650000000,  690000000,  740000000,  780000000,  800000000,  810000000,  820000000,  823000000,  830000000,  },
- /* direct */    {   500000000,  823000000,  830000000,  850000000,  860000000,  870000000,  880000000,  890000000,  900000000,  910000000,  920000000,  930000000,  970000000,  1030000000,     1040000000,     1050000000,     1060000000,     1070000000,     1080000000,     1100000000,     },
- /* adf */   {   500000000,  700000000,  1340000000,     1500000000,     2000000000,     2350000000,     2800000000,     2810000000,     3000000000,     3410000000,     3600000000,     3990000000,     4330000000,     4570000000,     4760000000,     5310000000,     5320000000,     5720000000,     6100000000,     6440000000,     },
- /* ultra */ {   10000,  100000,     500000,     3000000,    50000000,   800000000,  2300000000,     2800000000,     3300000000,     3620000000,     4200000000,     4470000000,     4480000000,     4570000000,     4780000000,     5330000000,     5700000000,     6000000000,     6390000000,     7300000000,     },
+ /* low */   {   10000,  20000,  60000,  200000,     400000,     600000,     700000,     1000000,    3000000,    30000000,   80000000,   190000000,  240000000,  440000000,  610000000,  640000000,  770000000,  850000000,  880000000,  900000000},
+ /* low lna */   {   10000,  20000,  40000,  100000,     200000,     400000,     600000,     700000,     1000000,    4000000,    10000000,   30000000,   90000000,   130000000,  220000000,  310000000,  590000000,  700000000,  840000000,  900000000},
+ /* ultra */ {   30000000,   700000000,  1030000000,     1560000000,     2250000000,     3590000000,     4070000000,     4340000000,     4630000000,     4830000000,     4870000000,     5370000000,     5670000000,     6220000000,     6430000000,     6550000000,     6600000000,     6800000000,     7200000000,     7350000000},
+ /* ultra lna */ {   30000000,   700000000,  1090000000,     1540000000,     1870000000,     2690000000,     3110000000,     3520000000,     4000000000,     4170000000,     4360000000,     4810000000,     5360000000,     5620000000,     5970000000,     6220000000,     6440000000,     6710000000,     7010000000,     7350000000},
+ /* direct */    {   140000000,  150000000,  160000000,  180000000,  280000000,  330000000,  410000000,  500000000,  540000000,  560000000,  830000000,  840000000,  880000000,  910000000,  950000000,  970000000,  990000000,  1050000000,     1110000000,     1130000000},
+ /* direct lna */    {   140000000,  160000000,  180000000,  280000000,  370000000,  390000000,  430000000,  460000000,  510000000,  530000000,  560000000,  830000000,  840000000,  860000000,  900000000,  940000000,  1000000000,     1050000000,     1070000000,     1130000000},
+ /* harm */  {   30000000,   5000000000,     5200000000,     5540000000,     6570000000,     7200000000,     7740000000,     8110000000,     8350000000,     8460000000,     8590000000,     8910000000,     9010000000,     9300000000,     9740000000,     9800000000,     9970000000,     10560000000,    10910000000,    11000000000},
+ /* harm lna */  {   30000000,   5000000000,     5200000000,     5360000000,     5560000000,     5800000000,     6190000000,     6460000000,     6720000000,     7440000000,     7880000000,     8490000000,     8750000000,     9150000000,     9240000000,     10110000000,    10210000000,    10510000000,    10910000000,    11000000000},
+ /* out */   {   10000,  20000,  60000,  200000,     400000,     600000,     2000000,    5000000,    30000000,   120000000,  200000000,  320000000,  400000000,  450000000,  500000000,  570000000,  700000000,  780000000,  870000000,  900000000},
+ /* direct */    {   823000000,  930000000,  940000000,  950000000,  1070000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000,     1140000000},
+ /* adf */   {   740000000,  770000000,  820000000,  880000000,  940000000,  1020000000,     1070000000,     1100000000,     1140000000,     1210000000,     1230000000,     1310000000,     1340000000,     1460000000,     1620000000,     1660000000,     1700000000,     1750000000,     1780000000,     2000000000},
+ /* ultra */ {   10000,  30000,  80000,  200000,     400000,     2000000,    5000000,    260000000,  700000000,  1050000000,     1580000000,     2800000000,     2810000000,     3880000000,     4980000000,     5630000000,     6480000000,     6750000000,     7000000000,     7500000000}
 };
 
 const float  v5_2_correction_value[CORRECTION_SIZE][CORRECTION_POINTS]=
 {
- /* low */   {   2.88,   1.06,   0.9,    0.85,   1.3,    0.72,   0.8,    0.53,   1.03,   0.81,   0.55,   0.05,   -0.06,  0.18,   -0.28,  0.61,   0.98,   2.89,   3.89,   7.37,   },
- /* low lna */   {   6.07,   2.97,   0.76,   -0.73,  -1.37,  -2.36,  -2.92,  1.36,   2.67,   3.52,   6.12,   9.45,   9.54,   5.97,   4.72,   3.88,   4.51,   6.38,   9.34,   11.81,  },
- /* ultra */ {   0.8,    -0.28,  0.73,   2.69,   2.03,   3.31,   3.66,   5.8,    6.23,   9.6,    9.98,   9.93,   9.51,   12.2,   12.78,  11.56,  15.13,  18.42,  26.5,   32.3,   },
- /* ultra lna */ {   1.55,   4.69,   6.26,   7.85,   8.56,   7.06,   8.14,   8.05,   11.61,  11.11,  13,     16.08,  15.89,  14.81,  14.94,  19.78,  20.41,  19.04,  19.28,  38,     },
- /* direct */    {   34.6,   32.01,  29.84,  21.67,  20.24,  14.92,  14.41,  13.69,  10.25,  8.75,   -0.01,  -0.14,  0.69,   1.18,   1.19,   1.94,   3.52,   4.36,   5.11,   5.69,   },
- /* direct lna */    {   30.57,  26.24,  22.57,  18.99,  16.02,  12.32,  12.31,  11.59,  10.08,  9.92,   8.18,   5.66,   5.68,   -2.2,   -2.65,  -2.68,  -1.79,  -0.94,  -0.89,  3.09,   },
- /* harm */  {   18.7,   18.91,  19.91,  19.41,  19.91,  21.91,  22.41,  23.91,  26.91,  28.41,  34.41,  36.41,  37.91,  35.94,  35.94,  36.9,   38.44,  40.94,  44.94,  48.94,  },
- /* harm lna */  {   13.6,   24.41,  23.41,  23.41,  19.91,  19.41,  21.91,  27.41,  31.91,  39.91,  41.91,  43.41,  42.91,  38.91,  40.91,  44.41,  47.91,  57.91,  61.41,  61.46,  },
- /* out */   {   3.84,   2.31,   1.04,   0.1,    -0.82,  -1.51,  -2.33,  -2.25,  -2.04,  -1.43,  -2.2,   -2.36,  -1.84,  -1.23,  0.51,   1.8,    3.17,   6.28,   7.85,   12.37,  },
- /* direct */    {   -7.76,  -3.85,  -3.71,  -3.54,  -3.45,  -3.34,  -3.23,  -3.11,  -2.98,  -2.86,  -2.74,  -2.64,  -2.14,  -1.29,  -1.14,  -1.05,  -0.89,  -0.79,  -0.62,  -0.31,  },
- /* adf */   {   5.58,   3.91,   -4.52,  -6,     -3.36,  -2.14,  -2.3,   -3.11,  -3.11,  -2.05,  -1.5,   -1.36,  1.28,   4.63,   5.89,   5.55,   5.47,   6.49,   3.86,   5.8,    },
- /* ultra */ {   3.69,   0.75,   -0.94,  -1.61,  -2.45,  -3.16,  -1.09,  0.2,    0.73,   2.14,   2.37,   4.84,   3.13,   4.15,   4.89,   4.13,   7.48,   7.14,   8.99,   18.8,   },
+ /* low */   {   19.61,  16.55,  12.96,  10.22,  10.86,  7.67,   3.13,   1.63,   0.44,   0.00001,    0.06,   1.46,   1.76,   0.66,   0.2,    0.64,   0.87,   1.95,   2.46,   3.63},
+ /* low lna */   {   23.82,  16.13,  13.04,  10.6,   9.61,   10.61,  7.5,    3.57,   2.09,   0.38,   0.12,   0.00001,    0.73,   1.95,   1.68,   2.08,   1.12,   1.11,   1.97,   4.08},
+ /* ultra */ {   0.00001,    0.13,   1.41,   1.31,   2.52,   6.04,   6.36,   7.21,   9.03,   9.57,   10.08,  9.18,   9.19,   12.3,   12.31,  12.88,  13.29,  15.67,  22.99,  24.23},
+ /* ultra lna */ {   0.000001,   1.39,   1.22,   1.63,   2.85,   3.49,   5.74,   6.07,   7.87,   7.31,   3.22,   12.26,  12.7,   11.24,  12.81,  11.81,  13.31,  17.77,  20.25,  26.37},
+ /* direct */    {   55.3,   52.08,  51.43,  47.73,  35.53,  30.88,  24.63,  18.21,  15.87,  15.65,  2.63,   2.63,   1.42,   0.77,   0.79,   0.33,   0.26,   0.00001,    0.3,    0.66},
+ /* direct lna */    {   55.46,  51.53,  48.25,  35.96,  27.69,  26.58,  23.27,  21.52,  17.61,  16.3,   15.38,  2.61,   2.61,   1.7,    1.25,   0.27,   0.02,   0.00001,    0.4,    0.74},
+ /* harm */  {   0.00001,    14.37,  13.24,  12.6,   16.02,  23.87,  23.67,  26.52,  28.25,  29.67,  31.11,  38.42,  39.13,  37.82,  39.74,  40.43,  42.3,   55.01,  51.96,  52.42},
+ /* harm lna */  {   0.00001,    21.18,  21.2,   20.68,  17.77,  16.5,   15.35,  18.34,  23.3,   29.41,  28.82,  34.25,  37.63,  47.03,  48.12,  52.68,  54.27,  63.74,  57.34,  57.58},
+ /* out */   {   8.37,   5.53,   2.3,    -1.37,  -3.14,  -3.43,  -5.06,  -5.59,  -5.95,  -5.59,  -4.55,  -5.06,  -5.06,  -5.59,  -5.35,  -5.78,  -5.12,  -5.17,  -3.81,  -2.37},
+ /* direct */    {   -3.9,   -2.73,  -2.55,  -2.5,   -1.04,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03,  -0.03},
+ /* adf */   {   -3.25,  -2.51,  -1.77,  -1.34,  -0.16,  2.8,    5.37,   5.23,   3.76,   -0.93,  -1.98,  -4.71,  -5.41,  -7.41,  -8.63,  -8.53,  -8.28,  -7.66,  -7.56,  -5.78},
+ /* ultra */ {   8.24,   4.14,   1.31,   -1.56,  -3.29,  -5.09,  -5.59,  -4.86,  -5.78,  -4.61,  -4.67,  -2.02,  -2.93,  -0.36,  2.78,   1.84,   4.97,   8.07,   10.8,   22.47},
 };
 
 const float v5_2_harmonic_lna_level_offset = 0; // should be in correction table now -7;        // Depends on where the transition to harmonic is done!!!!!! TODO find best frequency to transition to harmonic
 const float v5_2_harmonic_level_offset = 0; // should be in correction table now -7;        // Depends on where the transition to harmonic is done!!!!!! TODO find best frequency to transition to harmonic
 const float v5_2_lna_level_offset = 7;
+
+const freq_t v4_6_correction_frequency[CORRECTION_SIZE][CORRECTION_POINTS]=
+{
+ /* low */   {   10000,  20000,  90000,  200000,     800000,     4000000,    30000000,   100000000,  180000000,  300000000,  400000000,  550000000,  680000000,  700000000,  720000000,  730000000,  740000000,  790000000,  860000000,  900000000},
+ /* low lna */   {   10000,  30000,  80000,  500000,     800000,     3000000,    15000000,   30000000,   80000000,   120000000,  310000000,  600000000,  650000000,  690000000,  700000000,  720000000,  800000000,  840000000,  880000000,  900000000},
+ /* ultra */ {   30000000,   700000000,  890000000,  930000000,  980000000,  1580000000,     1710000000,     2000000000,     2400000000,     2410000000,     2440000000,     2760000000,     2960000000,     3090000000,     4010000000,     4380000000,     4900000000,     5010000000,     5160000000,     5400000000},
+ /* ultra lna */ {   30000000,   700000000,  1300000000,     1820000000,     1980000000,     2160000000,     2420000000,     2430000000,     2790000000,     2820000000,     3010000000,     3060000000,     3530000000,     3880000000,     3980000000,     4310000000,     4480000000,     5010000000,     5350000000,     5400000000},
+ /* direct */    {   140000000,  160000000,  180000000,  280000000,  340000000,  380000000,  520000000,  540000000,  560000000,  830000000,  840000000,  850000000,  860000000,  910000000,  980000000,  1000000000,     1040000000,     1060000000,     1100000000,     1130000000},
+ /* direct lna */    {   140000000,  160000000,  180000000,  280000000,  350000000,  440000000,  500000000,  560000000,  830000000,  840000000,  850000000,  860000000,  870000000,  900000000,  980000000,  990000000,  1020000000,     1060000000,     1080000000,     1130000000},
+ /* harm */  {   30000000,   5000000000,     5400000000,     5770000000,     6020000000,     6230000000,     6380000000,     6770000000,     7220000000,     7470000000,     7910000000,     8070000000,     8300000000,     8450000000,     8710000000,     9200000000,     9380000000,     10350000000,    10800000000,    11000000000},
+ /* harm lna */  {   30000000,   5000000000,     5390000000,     5680000000,     6020000000,     6630000000,     7260000000,     7620000000,     7940000000,     8100000000,     8290000000,     8480000000,     8660000000,     9000000000,     9400000000,     9540000000,     10000000000,    10410000000,    10790000000,    11000000000},
+ /* out */   {   10000,  20000,  40000,  100000,     200000,     300000,     500000,     2000000,    5000000,    50000000,   120000000,  190000000,  400000000,  480000000,  550000000,  650000000,  760000000,  840000000,  870000000,  900000000},
+ /* direct */    {   823000000,  850000000,  860000000,  880000000,  890000000,  910000000,  920000000,  950000000,  980000000,  990000000,  1000000000,     1030000000,     1050000000,     1060000000,     1070000000,     1080000000,     1100000000,     1120000000,     1130000000,     1140000000},
+ /* adf */   {   740000000,  900000000,  920000000,  1090000000,     1120000000,     1400000000,     1420000000,     1530000000,     1660000000,     2000000000,     2200000000,     2210000000,     2420000000,     2800000000,     2830000000,     3080000000,     3610000000,     3790000000,     4250000000,     4450000000},
+ /* ultra */ {   10000,  20000,  50000,  100000,     200000,     300000,     1000000,    2000000,    4000000,    30000000,   170000000,  690000000,  1060000000,     1670000000,     2200000000,     2800000000,     2810000000,     4370000000,     4940000000,     5480000000}
+};
+
+const float  v4_6_correction_value[CORRECTION_SIZE][CORRECTION_POINTS]=
+{
+ /* low */   {   14.1,   12.14,  8.12,   6.01,   2.64,   0.11,   0,  -0.09,  1.58,   1.53,   1.43,   0.26,   1.08,   1.63,   1.04,   1.71,   1.05,   1.04,   2.26,   4.55},
+ /* low lna */   {   12.19,  9.19,   6.74,   3.43,   2.18,   0.11,   -0.37,  0,  0.03,   0.61,   1.63,   0.2,    0.64,   0.67,   1.63,   1.13,   1.03,   1.53,   2.29,   3.63},
+ /* ultra */ {   0,  0.54,   0.68,   1.23,   1.36,   1.41,   2.01,   2.13,   2.93,   2.9,    3.89,   4.11,   5.43,   4.67,   6.73,   6.45,   9.5,    9.07,   9.45,   8.31},
+ /* ultra lna */ {   0,  0.64,   1.29,   1.14,   1.68,   1.18,   1.07,   2.35,   3.21,   4.04,   5.3,    4.58,   8.22,   9.01,   10.17,  15.78,  17.71,  18.09,  21.04,  20.91},
+ /* direct */    {   54.66,  50.54,  47.16,  34.75,  29.22,  26.08,  15.78,  14.78,  14.33,  1.37,   1.12,   1.11,   0.52,   0.23,   0.2,    0,  0.11,   0.46,   0.48,   0.75},
+ /* direct lna */    {   54.36,  50.7,   47.47,  34.91,  28.42,  21.43,  17.33,  14.01,  1.35,   1.35,   0.84,   0.71,   0.25,   -0.04, 0,  -0.19,  0.24,   0.21,   0.67,   0.99},
+ /* harm */  {   0,  14.79,  12.45,  15.87,  15.04,  15.34,  15.9,   18.94,  17.22,  17.41,  22.64,  25.72,  31.44,  31.72,  33.08,  33.04,  33.74,  43.39,  49.22,  51.29},
+ /* harm lna */  {   0.0001,     28.48,  29.12,  32.11,  31.65,  36.6,   33.62,  35.5,   38.58,  41.76,  47,     49.14,  52.04,  52.12,  55.02,  56.14,  64.84,  67.08,  71.58,  72.25},
+ /* out */   {   6.01,   3.81,   2.1,    -0.39,  -2.39,  -3.3,   -3.69,  -5.56,  -6.05,  -6.35,  -5.95,  -4.84,  -5.21,  -5.91,  -6.05,  -5.57,  -5.49,  -4.59,  -3.74,  -1.96},
+ /* direct */    {   -3.79,  -3.51,  -3.38,  -3.18,  -3.03,  -2.9,   -2.69,  -2.38,  -2,     -1.91,  -1.74,  -1.41,  -1.16,  -1.06,  -0.81,  -0.81,  -0.47,  -0.29,  -0.1,   0.04},
+ /* adf */   {   2.24,   2.32,   2.93,   1.53,   0.82,   -0.68,  -0.25,  0.4,    -0.21,  -0.07,  1.58,   2.3,    2.36,   1.24,   0.03,   0.28,   -2.55,  -2.72,  -1.28,  0.73},
+ /* ultra */ {   5.86,   3.66,   1.3,    -0.79,  -2.65,  -3.54,  -4.79,  -5.66,  -6.05,  -6.33,  -5.31,  -5.96,  -4.87,  -4.76,  -4.17,  -1.98,  -2.79,  -0.66,  2.09,   1.84},
+};
+
+const float v4_6_harmonic_lna_level_offset = 0; // should be in correction table now -7;        // Depends on where the transition to harmonic is done!!!!!! TODO find best frequency to transition to harmonic
+const float v4_6_harmonic_level_offset = 0; // should be in correction table now -7;        // Depends on where the transition to harmonic is done!!!!!! TODO find best frequency to transition to harmonic
+const float v4_6_lna_level_offset = 7;
 
 #endif
 
@@ -1313,10 +1387,10 @@ VNA_SHELL_FUNCTION(cmd_scan)
 do_scan:
   pause_sweep();
   setting.sweep = true;         // prevent abort
-  sweep(false);
+  sweep(true);
   setting.sweep = false;
   // Output data after if set (faster data recive)
-  if (argc == 4) {
+  if (argc == 4 && !operation_requested) {
     uint16_t mask = my_atoui(argv[3]);
     if (mask) {
       for (i = 0; i < sweep_points; i++) {
@@ -2122,18 +2196,23 @@ typedef struct version_t {
   const uint16_t min_adc;
   const uint16_t max_adc;
   const char *text;
-  const uint16_t hwid;
+  const uint8_t hwid;
+  const uint8_t hw_if;
+  const char *hw_text;
 } version_t;
 
-#define MAX_VERSION_TEXT    3
+#define MAX_VERSION_TEXT    5
 const version_t hw_version_text[MAX_VERSION_TEXT] =
 {
- { 165, 179,    "V0.4.5.1",     1},
- { 180, 195,    "V0.4.5.1.1",   2},
- { 2030, 2050,  "V0.5.2",       102},
+ { 165, 179,    "V0.4.5.1",     1,      0, " ZS405"},
+ { 180, 195,    "V0.4.5.1.1",   2,      0, " ZS405"},
+ { 250, 350,    "V0.4.6",       3,      1, "+ ZS406"},
+ { 2200, 2299,  "V0.5.4",       103,    1, "+ ZS407"},
 };
 
 uint16_t hwid = 0;
+uint16_t hw_if = 0;
+char *hw_text = "";
 
 const char *get_hw_version_text(void)
 {
@@ -2141,10 +2220,13 @@ const char *get_hw_version_text(void)
   for (int i=0; i<MAX_VERSION_TEXT;i++) {
     if (hw_version_text[i].min_adc <= v && v <= hw_version_text[i].max_adc) {
       hwid = hw_version_text[i].hwid;
+      hw_if = hw_version_text[i].hw_if;
+      hw_text = (char *) hw_version_text[i].hw_text;
       return hw_version_text[i].text;
     }
   }
   hwid = 0;
+  hw_if = 0;
   return "Unknown";
 }
 #endif
@@ -2184,8 +2266,10 @@ VNA_SHELL_FUNCTION(cmd_info)
   (void)argc;
   (void)argv;
   int i = 0;
-  while (info_about[i])
-    shell_printf("%s\r\n", info_about[i++]);
+  while (info_about[i]) {
+    shell_printf("%s%s\r\n", info_about[i], (i == 0 ? hw_text : ""));
+    i++;
+  }
 #ifdef TINYSA3
   if (has_esd)
     shell_printf("ESD protected\r\n");
@@ -2319,12 +2403,16 @@ static const VNAShellCommand commands[] =
     {"hop"         , cmd_hop         , CMD_WAIT_MUTEX},
 #endif
     {"scanraw"     , cmd_scanraw     , CMD_WAIT_MUTEX},
+    {"abort"       , cmd_abort       , 0},
     {"zero"        , cmd_zero        , CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD},   // Will set the scanraw measured value offset (128 or 174)
     {"sweep"       , cmd_sweep       , CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD},
     {"test"        , cmd_test        , 0},
     {"touchcal"    , cmd_touchcal    , CMD_WAIT_MUTEX},
     {"touchtest"   , cmd_touchtest   , CMD_WAIT_MUTEX},
     {"pause"       , cmd_pause       , CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD},
+#ifdef TINYSA4
+    {"restart"     , cmd_restart     , CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD},
+#endif
     {"resume"      , cmd_resume      , CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD},
     {"wait"        , cmd_wait        , CMD_RUN_IN_LOAD},                                 // This lets the sweep continue
     {"repeat"      , cmd_repeat      , CMD_RUN_IN_LOAD},
@@ -2359,7 +2447,7 @@ static const VNAShellCommand commands[] =
 #ifdef ENABLE_COLOR_COMMAND
     {"color"       , cmd_color       , CMD_RUN_IN_LOAD},
 #endif
-    { "if", cmd_if,    CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD },
+    { "if", cmd_if,    CMD_RUN_IN_LOAD },
 #ifdef TINYSA4
     { "if1", cmd_if1,    CMD_RUN_IN_LOAD },
     { "lna2", cmd_lna2,    CMD_RUN_IN_LOAD },
@@ -2381,6 +2469,7 @@ static const VNAShellCommand commands[] =
     { "spur", cmd_spur,    CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD },
 #endif
 #ifdef TINYSA4
+    { "avoid", cmd_avoid,    CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD },
     { "lna", cmd_lna,    CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD },
     { "direct", cmd_direct, CMD_WAIT_MUTEX | CMD_RUN_IN_LOAD },
 #endif
@@ -2576,11 +2665,6 @@ static bool shell_check_connect(void){
 // Init shell I/O connection over USB
 static void shell_init_connection(void){
 /*
- * Init shell thread object (need for switch threads)
- */
-  osalThreadQueueObjectInit(&shell_thread);
-
-/*
  * Initializes and start serial-over-USB CDC driver SDU1, connected to USBD1
  */
   sduObjectInit(&SDU1);
@@ -2702,12 +2786,15 @@ static void VNAShell_executeLine(char *line)
       shell_function = scp->sc_function;
       operation_requested|=OP_CONSOLE;      // this will abort current sweep to give priority to the new request
       // Wait execute command in sweep thread
-      do {
-        osalThreadEnqueueTimeoutS(&shell_thread, TIME_INFINITE);
-      } while (shell_function);
+      if (!abort_enabled && shell_function != 0){
+        do {
+          osalThreadEnqueueTimeoutS(&shell_thread, TIME_INFINITE);
+        } while (shell_function);
+      }
     } else {
       operation_requested = false; // otherwise commands  will be aborted
       scp->sc_function(shell_nargs - 1, &shell_args[1]);
+      shell_printf(VNA_SHELL_PROMPT_STR);
       if (dirty) {
         operation_requested = true;   // ensure output is updated
         if (MODE_OUTPUT(setting.mode))
@@ -2719,6 +2806,7 @@ static void VNAShell_executeLine(char *line)
     return;
   }
   shell_printf("%s?" VNA_SHELL_NEWLINE_STR, shell_args[0]);
+  shell_printf(VNA_SHELL_PROMPT_STR);
 }
 
 void shell_executeCMDLine(char *line) {
@@ -2784,8 +2872,8 @@ THD_FUNCTION(myshellThread, p)
   (void)p;
   chRegSetThreadName("shell");
   shell_printf(VNA_SHELL_NEWLINE_STR"tinySA Shell"VNA_SHELL_NEWLINE_STR);
+  shell_printf(VNA_SHELL_PROMPT_STR);
   while (true) {
-    shell_printf(VNA_SHELL_PROMPT_STR);
     if (VNAShell_readLine(shell_line, VNA_SHELL_MAX_LENGTH))
       VNAShell_executeLine(shell_line);
     else // Putting a delay in order to avoid an endless loop trying to read an unavailable stream.
@@ -2908,13 +2996,13 @@ void set_freq_boundaries(void) {
     MAX_ABOVE_IF_FREQ   = 3030000000ULL + config.overclock;           // Range to use for below IF
     MIN_BELOW_IF_FREQ   = 2430000000ULL + config.overclock;           // Range to use for below IF
   }
-  set_jump_freq( MAX_ABOVE_IF_FREQ, (config.harmonic_start?config.harmonic_start:ULTRA_MAX_FREQ), MIN_BELOW_IF_FREQ);
+  set_jump_freq( MAX_ABOVE_IF_FREQ, MIN_BELOW_IF_FREQ, (config.harmonic_start?config.harmonic_start:ULTRA_MAX_FREQ)); // Harmonic must be last
 }
 #endif
 
 
 #ifdef SA5_ULTRA
-#define ENC_TIMER       GPTD6
+#define ENC_TIMER GPTD6
 
 void enc_timer_callback(GPTDriver *gptp)
 {
@@ -2925,11 +3013,12 @@ void enc_timer_callback(GPTDriver *gptp)
 
 // Encoder timer check (check press frequency 500Hz)
 static const GPTConfig enc_gptcfg = {
-  1000000,                // Timer Clock: 1MHz
-  enc_timer_callback,     // Timer callback
-  0,
-  0
+    1000000,  // Timer Clock: 1MHz
+    enc_timer_callback,  // Timer callback
+    0,
+    0
 };
+
 #endif
 
 #if 0
@@ -2956,9 +3045,8 @@ static THD_FUNCTION(REncoderThread, arg)
     chThdSleepMilliseconds(2);
   }
 }
+
 #endif
-
-
 
 int main(void)
 {
@@ -3089,20 +3177,42 @@ int main(void)
     config.switch_offset = -5.0;
 #endif
 #ifdef SA5_ULTRA
-  int reset_state = 0;    // load config from flash
+  int reset_state = 0;  // load config from flash
 #else
   int reset_state = btn_side();
 #endif
 #ifdef TINYSA4
-  if (adc1_single_read(0)> 1000) {
+  if (hw_if) {
+    ULTRA_THRESHOLD = 800000000ULL;
+    NORMAL_MAX_FREQ = 900000000ULL;
+    config.frequency_IF1 = DEFAULT_IF_PLUS;
+  } else {
+    ULTRA_THRESHOLD = 700000000ULL;
+    NORMAL_MAX_FREQ = 800000000ULL;
+    config.frequency_IF1 = DEFAULT_IF;
+  }
+  if (hwid >= 100) {
     max2871 = true;
     memcpy(config.correction_frequency, v5_2_correction_frequency, sizeof(config.correction_frequency));
     memcpy(config.correction_value, v5_2_correction_value, sizeof(config.correction_value));
     config.harmonic_level_offset = v5_2_harmonic_level_offset;
     config.harmonic_lna_level_offset = v5_2_harmonic_lna_level_offset;
-    ULTRA_MAX_FREQ      = 7300000000ULL;
+    ULTRA_MAX_FREQ      = 6300000000 + config.frequency_IF1;
   } else {
-    ULTRA_MAX_FREQ      = 5340000000ULL;
+    if (hw_if) {
+      memcpy(config.correction_frequency, v4_6_correction_frequency, sizeof(config.correction_frequency));
+      memcpy(config.correction_value, v4_6_correction_value, sizeof(config.correction_value));
+      config.harmonic_level_offset = v4_6_harmonic_level_offset;
+      config.harmonic_lna_level_offset = v4_6_harmonic_lna_level_offset;
+      config.low_level_output_offset = 1;
+
+//      ULTRA_MAX_FREQ      = 5450000000ULL;
+    }
+//    else
+//      ULTRA_MAX_FREQ      = 5340000000ULL;
+    ULTRA_MAX_FREQ = 4350000000 + config.frequency_IF1;
+    config.direct_start =  config.frequency_IF1 - 10000000;
+    config.direct_stop =  config.frequency_IF1 + 10000000;
   }
   set_freq_boundaries();
 #endif
@@ -3124,7 +3234,7 @@ int main(void)
   }
 #ifdef __ULTRA__
   else
-    ultra_start = (config.ultra_start == ULTRA_AUTO ? DEFAULT_ULTRA_THRESHOLD : config.ultra_start);
+    ultra_start = (config.ultra_start == ULTRA_AUTO ? ULTRA_THRESHOLD : config.ultra_start);
 #endif
 
 
@@ -3179,7 +3289,7 @@ int main(void)
     backup_t b;
     uint32_t *f = &backup;
     uint32_t *t = (uint32_t *)&b;
-    int i = USED_BACKUP_SIZE+1;
+    int i = USED_BACKUP_SIZE;
     while (i--)
       *t++ = *f++;
     uint8_t *c = (uint8_t *)&b;
@@ -3188,10 +3298,10 @@ int main(void)
     while (ci--) {
       checksum ^= *c++;
     }
-    if (b.checksum == checksum) {
+    if (b.data.checksum == checksum) {
 #ifdef TINYSA4       // Set mode not working reliably
-      set_mode(b.mode);
-      switch (b.mode) {
+      set_mode(b.data.mode);
+      switch (b.data.mode) {
       case M_LOW:
       case M_HIGH:
         break;
@@ -3204,31 +3314,33 @@ int main(void)
         menu_push_submenu(menu_highoutputmode);
         break;
       }
+      set_harmonic(b.data.harmonic);
 #endif
-      if (b.frequency0 != 0 || b.frequency1 != 0) {
-        if (b.mode <= M_HIGH){
-          set_sweep_frequency(ST_START, b.frequency0);
-          set_sweep_frequency(ST_STOP, b.frequency1);
+      set_external_gain(b.data.external_gain/2);
+      if (b.data.frequency0 != 0 || b.data.frequency1 != 0) {
+        if (b.data.mode <= M_HIGH){
+          set_sweep_frequency(ST_START, b.data.frequency0);
+          set_sweep_frequency(ST_STOP, b.data.frequency1);
         } else {
-          set_sweep_frequency(ST_CW, (b.frequency0 + b.frequency1)/2);
-          set_sweep_frequency(ST_SPAN, (b.frequency1 - b.frequency0));
+          set_sweep_frequency(ST_CW, (b.data.frequency0 + b.data.frequency1)/2);
+          set_sweep_frequency(ST_SPAN, (b.data.frequency1 - b.data.frequency0));
           ui_mode_menu();
         }
-        if (b.attenuation == 0) {
+        if (b.data.attenuation == 0) {
           set_auto_attenuation();
         } else {
-          set_attenuation((b.attenuation - 1)/2.0);
+          set_attenuation((b.data.attenuation - 1)/2.0);
         }
-        if (b.reflevel == 0) {
+        if (b.data.reflevel == 0) {
           set_auto_reflevel(true);
         } else {
           set_auto_reflevel(false);
-          user_set_reflevel((float)(b.reflevel-140));
+          user_set_reflevel((float)(b.data.reflevel-140));
         }
-        if (b.RBW == 0) {
+        if (b.data.RBW == 0) {
           setting.rbw_x10 = 0;
         } else {
-          set_RBW(force_rbw(b.RBW-1));
+          set_RBW(force_rbw(b.data.RBW-1));
         }
       }
     }
@@ -3249,10 +3361,14 @@ int main(void)
   chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO-1, Thread1, NULL);
 
 #ifdef SA5_ULTRA
-  // chThdCreateStatic(waREncoderThread, sizeof(waREncoderThread), HIGHPRIO, REncoderThread, NULL);
+  // chThdCreateStatic(waREncoderThread, sizeof(waREncoderThread), HIGHPRIO,
+  // REncoderThread, NULL);
   gptStart(&ENC_TIMER, &enc_gptcfg);
-  gptStartContinuous(&ENC_TIMER, 2000);     // period = 1MHz / 2000 = 500Hz = 2ms
+  gptStartContinuous(&ENC_TIMER, 2000);  // period = 1MHz / 2000 = 500Hz = 2ms
 #endif
+
+
+ // toggle_debug_avoid();
 
   while (1) {
 //    if (SDU1.config->usbp->state == USB_ACTIVE) {
@@ -3267,8 +3383,8 @@ int main(void)
       chThdWait(shelltp);
 #else
       shell_printf(VNA_SHELL_NEWLINE_STR"tinySA Shell"VNA_SHELL_NEWLINE_STR);
+      shell_printf(VNA_SHELL_PROMPT_STR);
       do {
-        shell_printf(VNA_SHELL_PROMPT_STR);
         if (VNAShell_readLine(shell_line, VNA_SHELL_MAX_LENGTH))
           VNAShell_executeLine(shell_line);
         else

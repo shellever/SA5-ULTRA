@@ -59,9 +59,9 @@ uistat_t uistat = {
 #define BIT_DOWN1   1
 
 #ifdef SA5_ULTRA
-#define BUTTON_DOWN                 (1<<BIT_DOWN1)
-#define BUTTON_PUSH                 (1<<BIT_PUSH)
-#define BUTTON_UP                   (1<<BIT_UP1)
+#define BUTTON_DOWN (1 << BIT_DOWN1)
+#define BUTTON_PUSH (1 << BIT_PUSH)
+#define BUTTON_UP (1 << BIT_UP1)
 #endif
 
 #define READ_PORT() palReadPort(GPIOA)
@@ -78,6 +78,7 @@ static uint16_t menu_button_height = MENU_BUTTON_HEIGHT_N(MENU_BUTTON_MIN);
 
 volatile uint8_t operation_requested = OP_NONE;
 volatile uint8_t break_execute = false;
+volatile uint8_t abort_enabled = false;
 
 int8_t previous_marker = MARKER_INVALID;
 
@@ -270,7 +271,6 @@ static int btn_wait_release(void)
 }
 #endif
 
-
 #ifdef SA5_ULTRA
 // =================================================================================================
 // source ported from: https://github.com/MajicDesigns/MD_REncoder
@@ -278,63 +278,61 @@ static int btn_wait_release(void)
 Set this to 1 to emit codes when the rotary encoder is at 11 as well as 00.
 The default is to emit codes only at 00.
 */
-#define ENABLE_HALF_STEP  1   // 0/1
+#define ENABLE_HALF_STEP 1  // 0/1
 
 //  Direction values returned by read() method
-#define DIR_NONE  0x00			// No complete step/movement
-#define DIR_CW    0x10			// Clockwise step/movement
-#define DIR_CCW   0x20  		// Counter-clockwise step/movement
+#define DIR_NONE 0x00  // No complete step/movement
+#define DIR_CW 0x10    // Clockwise step/movement
+#define DIR_CCW 0x20   // Counter-clockwise step/movement
 
 /*
-* The below state table has, for each state (row), the new state
-* to set based on the next encoder output. From left to right in,
-* the table, the encoder outputs are 00, 01, 10, 11, and the value
-* in that position is the new state to set.
-*/
+ * The below state table has, for each state (row), the new state
+ * to set based on the next encoder output. From left to right in,
+ * the table, the encoder outputs are 00, 01, 10, 11, and the value
+ * in that position is the new state to set.
+ */
 #define R_START 0x0
 
 #if ENABLE_HALF_STEP
 // Use the half-step state table (emits a code at 00 and 11)
-#define R_CCW_BEGIN   0x1
-#define R_CW_BEGIN    0x2
-#define R_START_M     0x3
-#define R_CW_BEGIN_M  0x4
+#define R_CCW_BEGIN 0x1
+#define R_CW_BEGIN 0x2
+#define R_START_M 0x3
+#define R_CW_BEGIN_M 0x4
 #define R_CCW_BEGIN_M 0x5
 
-const unsigned char ttable[][4] =
-{
-  // 00                  01              10            11
-  {R_START_M,           R_CW_BEGIN,     R_CCW_BEGIN,  R_START},           // R_START (00)
-  {R_START_M | DIR_CCW, R_START,        R_CCW_BEGIN,  R_START},           // R_CCW_BEGIN
-  {R_START_M | DIR_CW,  R_CW_BEGIN,     R_START,      R_START},           // R_CW_BEGIN
-  {R_START_M,           R_CCW_BEGIN_M,  R_CW_BEGIN_M, R_START},           // R_START_M (11)
-  {R_START_M,           R_START_M,      R_CW_BEGIN_M, R_START | DIR_CW},  // R_CW_BEGIN_M 
-  {R_START_M,           R_CCW_BEGIN_M,  R_START_M,    R_START | DIR_CCW}  // R_CCW_BEGIN_M
+const unsigned char ttable[][4] = {
+    // 00                  01              10            11
+    {R_START_M, R_CW_BEGIN, R_CCW_BEGIN, R_START},            // R_START (00)
+    {R_START_M | DIR_CCW, R_START, R_CCW_BEGIN, R_START},     // R_CCW_BEGIN
+    {R_START_M | DIR_CW, R_CW_BEGIN, R_START, R_START},       // R_CW_BEGIN
+    {R_START_M, R_CCW_BEGIN_M, R_CW_BEGIN_M, R_START},        // R_START_M (11)
+    {R_START_M, R_START_M, R_CW_BEGIN_M, R_START | DIR_CW},   // R_CW_BEGIN_M
+    {R_START_M, R_CCW_BEGIN_M, R_START_M, R_START | DIR_CCW}  // R_CCW_BEGIN_M
 };
 #else
 // Use the full-step state table (emits a code at 00 only)
-#define R_CW_FINAL   0x1
-#define R_CW_BEGIN   0x2
-#define R_CW_NEXT    0x3
-#define R_CCW_BEGIN  0x4
-#define R_CCW_FINAL  0x5
-#define R_CCW_NEXT   0x6
+#define R_CW_FINAL 0x1
+#define R_CW_BEGIN 0x2
+#define R_CW_NEXT 0x3
+#define R_CCW_BEGIN 0x4
+#define R_CCW_FINAL 0x5
+#define R_CCW_NEXT 0x6
 
-const unsigned char ttable[][4] =
-{
-  // 00         01           10           11
-  {R_START,    R_CW_BEGIN,  R_CCW_BEGIN, R_START},           // R_START
-  {R_CW_NEXT,  R_START,     R_CW_FINAL,  R_START | DIR_CW},  // R_CW_FINAL
-  {R_CW_NEXT,  R_CW_BEGIN,  R_START,     R_START},           // R_CW_BEGIN
-  {R_CW_NEXT,  R_CW_BEGIN,  R_CW_FINAL,  R_START},           // R_CW_NEXT
-  {R_CCW_NEXT, R_START,     R_CCW_BEGIN, R_START},           // R_CCW_BEGIN
-  {R_CCW_NEXT, R_CCW_FINAL, R_START,     R_START | DIR_CCW}, // R_CCW_FINAL
-  {R_CCW_NEXT, R_CCW_FINAL, R_CCW_BEGIN, R_START}            // R_CCW_NEXT
+const unsigned char ttable[][4] = {
+    // 00         01           10           11
+    {R_START, R_CW_BEGIN, R_CCW_BEGIN, R_START},            // R_START
+    {R_CW_NEXT, R_START, R_CW_FINAL, R_START | DIR_CW},     // R_CW_FINAL
+    {R_CW_NEXT, R_CW_BEGIN, R_START, R_START},              // R_CW_BEGIN
+    {R_CW_NEXT, R_CW_BEGIN, R_CW_FINAL, R_START},           // R_CW_NEXT
+    {R_CCW_NEXT, R_START, R_CCW_BEGIN, R_START},            // R_CCW_BEGIN
+    {R_CCW_NEXT, R_CCW_FINAL, R_START, R_START | DIR_CCW},  // R_CCW_FINAL
+    {R_CCW_NEXT, R_CCW_FINAL, R_CCW_BEGIN, R_START}         // R_CCW_NEXT
 };
 #endif
 
 // Encoder value
-uint8_t _state;     // latest state for the encoder
+uint8_t _state;  // latest state for the encoder
 
 // Rotary Encoder Pinouts
 // A  - PA1
@@ -343,12 +341,11 @@ uint8_t _state;     // latest state for the encoder
 // Grab state of input pins, determine new state from the pins
 // and state table, and return the emit bits (ie the generated event).
 // uint8_t MD_REncoder_read(void)
-uint8_t MD_REncoder_read(uint16_t cur_button)
-{
+uint8_t MD_REncoder_read(uint16_t cur_button) {
   uint8_t pinstate = 0;
-  //uint16_t cur_button = get_buttons();
+  // uint16_t cur_button = get_buttons();
 
-  //uint8_t pinstate = (digitalRead(board::ENC_B) << 1) | digitalRead(board::ENC_A);
+  // uint8_t pinstate = (digitalRead(board::ENC_B) << 1) | digitalRead(board::ENC_A);
 
   if (cur_button & BUTTON_DOWN) {
     pinstate |= 0x01;
@@ -365,14 +362,12 @@ uint8_t MD_REncoder_read(uint16_t cur_button)
   // return pinstate;
 }
 
-
 // rotary encoder event
 uint8_t re_event;
 
 // TODO: speedup marker moving using encoder
 // void REncoder_scan(void)
-void REncoder_scan(uint16_t cur_button)
-{
+void REncoder_scan(uint16_t cur_button) {
   uint8_t dir_state;
 
   // dir_state = MD_REncoder_read();
@@ -380,20 +375,18 @@ void REncoder_scan(uint16_t cur_button)
   if (dir_state != DIR_NONE) {
     if (dir_state == DIR_CW) {
       re_event |= EVT_UP;
-    } else {//if (dir_state == DIR_CCW) {
+    } else {  // if (dir_state == DIR_CCW) {
       re_event |= EVT_DOWN;
     }
 
-    operation_requested |= OP_LEVER;    // first down in one press
+    operation_requested |= OP_LEVER;  // first down in one press
   }
   // else {
   //   operation_requested = OP_NONE;
   // }
 }
 
-
-static uint16_t btn_check(void)
-{
+static uint16_t btn_check(void) {
   uint8_t event = re_event;
 
   // chThdSleepMilliseconds(10);   // take no effect maybe
@@ -402,11 +395,9 @@ static uint16_t btn_check(void)
   return event;
 }
 
-
-static uint16_t btn_wait_release(void)
-{
+static uint16_t btn_wait_release(void) {
   uint8_t event;
-  systime_t timeout = chVTGetSystemTimeX() + MS2ST(80);//80/100
+  systime_t timeout = chVTGetSystemTimeX() + MS2ST(80);  // 80/100
 
   while (TRUE) {
     systime_t ticks = chVTGetSystemTimeX();
@@ -420,16 +411,14 @@ static uint16_t btn_wait_release(void)
       return event;
     }
 
-    chThdSleepMilliseconds(2);  //5/10
+    chThdSleepMilliseconds(2);  // 5/10
   }
 }
-
 
 // push button state
 uint8_t last_push_btn_state;
 
-void push_btn_scan(uint8_t cur_btn)
-{
+void push_btn_scan(uint8_t cur_btn) {
   static uint8_t counter_20ms = 0;
   uint8_t cur_push_btn_state = 0;
   uint8_t push_btn_press;
@@ -440,8 +429,7 @@ void push_btn_scan(uint8_t cur_btn)
   }
   counter_20ms = 0;
 
-
-  //if (!(cur_btn & BUTTON_PUSH)) {
+  // if (!(cur_btn & BUTTON_PUSH)) {
   if (cur_btn & BUTTON_PUSH) {
     cur_push_btn_state = 0x01;
   }
@@ -453,13 +441,11 @@ void push_btn_scan(uint8_t cur_btn)
   if (push_btn_press) {
     re_event |= EVT_BUTTON_SINGLE_CLICK;
 
-    operation_requested |= OP_LEVER;    // first down in one press
+    operation_requested |= OP_LEVER;  // first down in one press
   }
 }
 
-
-void button_encoder_scan(void)
-{
+void button_encoder_scan(void) {
   uint16_t cur_button = get_buttons();
 
   REncoder_scan(cur_button);
@@ -777,7 +763,41 @@ touch_draw_test(void)
     }
   }while (!(btn_check() & EVT_BUTTON_SINGLE_CLICK));
 }
-
+#ifdef TINYSA4
+void
+touch_notepad(void)
+{
+  int x0, y0;
+  int x1, y1;
+  bool first = true;
+  ili9341_set_foreground(LCD_FG_COLOR);
+  ili9341_set_background(LCD_BG_COLOR);
+  ili9341_clear_screen();
+  ili9341_drawstring("TOUCH PANEL TO DRAW, PRESS JOG BUTTON TO CLEAR, RESTART TO EXIT", OFFSETX, LCD_HEIGHT - FONT_GET_HEIGHT);
+  lcd_set_font(FONT_SMALL);
+  while (true) {
+  do {
+    if (touch_check() == EVT_TOUCH_PRESSED){
+      if (first) {
+        ili9341_clear_screen();
+        first = false;
+      }
+      touch_position(&x0, &y0);
+      do {
+        chThdSleepMilliseconds(50);
+        touch_position(&x1, &y1);
+        ili9341_line(x0, y0, x1, y1);
+        x0 = x1;
+        y0 = y1;
+      } while (touch_check() != EVT_TOUCH_RELEASED);
+    }
+    }while (!(btn_check() & EVT_BUTTON_SINGLE_CLICK));
+    ili9341_clear_screen();
+    ili9341_drawstring("TOUCH PANEL TO DRAW, PRESS JOG BUTTON TO CLEAR, RESTART TO EXIT", OFFSETX, LCD_HEIGHT - FONT_GET_HEIGHT);
+    first = true;
+  }
+}
+#endif
 
 void
 touch_position(int *x, int *y)
@@ -836,22 +856,23 @@ show_version(void)
 // Version text for tinySA4
 #ifdef TINYSA4
   ili9341_drawstring_10x14(info_about[i++], x , y);
+  ili9341_drawstring_10x14(hw_text, x + 138 , y);
   y+=FONT_GET_HEIGHT*3+2-5;
   ili9341_drawstring_7x13(info_about[i++], x , y);
   while (info_about[i]) {
     do {shift>>=1; y+=5;} while (shift&1);
-
 #ifdef SA5_ULTRA
     const char *info_line = info_about[i++];
 
-    if (i - 1 == 4) {             // "Version: tinySA4_v1.4-156-gceb315d"
+    if (i - 1 == 4) {  // "Version: tinySA4_v1.4-156-gceb315d"
       char version_buff[48] = {0};
-      //memset(version_buff, '\0', 48);
-      memcpy(version_buff, info_line, 9);         // "Version: "
-      memcpy(&version_buff[9], &info_line[9+8], strlen(info_line) - 9 - 8); // "v1.4-156-gceb315d"
+      // memset(version_buff, '\0', 48);
+      memcpy(version_buff, info_line, 9);  // "Version: "
+      memcpy(&version_buff[9], &info_line[9 + 8],
+             strlen(info_line) - 9 - 8);  // "v1.4-156-gceb315d"
       info_line = version_buff;
     }
-    ili9341_drawstring_7x13(info_line, x, y+=bFONT_STR_HEIGHT+2-5);
+    ili9341_drawstring_7x13(info_line, x, y += bFONT_STR_HEIGHT + 2 - 5);
 #else
     ili9341_drawstring_7x13(info_about[i++], x, y+=bFONT_STR_HEIGHT+2-5);
 #endif
@@ -1837,7 +1858,7 @@ static UI_FUNCTION_ADV_CALLBACK(menu_internals_acb)
     if (uistat.value != 5432) {
       return;
     }
-#endif // DISABLE_INTERNAL_ACCESS_CODE
+#endif  // DISABLE_INTERNAL_ACCESS_CODE
     unlock_internals = 5432;
   }
   menu_push_submenu(menu_settings2);
@@ -2535,6 +2556,7 @@ static UI_FUNCTION_ADV_CALLBACK(menu_scanning_speed_acb)
 #define CONFIG_MENUITEM_SELFTEST    2
 #define CONFIG_MENUITEM_VERSION     3
 #define CONFIG_MENUITEM_CALIBRATE   4
+#define CONFIG_MENUITEM_NOTEPAD     5
 static UI_FUNCTION_CALLBACK(menu_config_cb)
 {
   (void)item;
@@ -2545,6 +2567,11 @@ static UI_FUNCTION_CALLBACK(menu_config_cb)
   case CONFIG_MENUITEM_TOUCH_TEST:
     touch_draw_test();
     break;
+#ifdef TINYSA4
+    case CONFIG_MENUITEM_NOTEPAD:
+    touch_notepad();
+    break;
+#endif
   case CONFIG_MENUITEM_SELFTEST:
     sweep_mode = 0;         // Suspend sweep to save time
     menu_move_back(true);
@@ -2681,6 +2708,18 @@ static UI_FUNCTION_ADV_CALLBACK(menu_modulation_acb)
   }
   set_modulation(data);
 //  menu_move_back(false);  // Don't move back
+}
+
+static UI_FUNCTION_ADV_CALLBACK(menu_level_in_dBuV)
+{
+  (void)item;
+  (void)data;
+  if (b){
+    b->icon = setting.dBuV ? BUTTON_ICON_CHECK : BUTTON_ICON_NOCHECK;
+    return;
+  }
+  setting.dBuV = !setting.dBuV;
+  menu_move_back(false);
 }
 
 static UI_FUNCTION_ADV_CALLBACK(menu_smodulation_acb){
@@ -2959,6 +2998,21 @@ static UI_FUNCTION_ADV_CALLBACK(menu_linear_averaging_acb)
   ui_mode_normal();
 }
 
+static UI_FUNCTION_ADV_CALLBACK(menu_audio_agc_acb)
+{
+  (void)data;
+  (void)item;
+  if (b){
+    b->icon = config.no_audio_agc ? BUTTON_ICON_NOCHECK : BUTTON_ICON_CHECK;
+    return;
+  }
+  config.no_audio_agc = ! config.no_audio_agc;
+  dirty = true;
+  config_save();
+  //  menu_move_back();
+  ui_mode_normal();
+}
+
 
 #endif
 
@@ -2980,7 +3034,7 @@ static UI_FUNCTION_ADV_CALLBACK(menu_ultra_acb)
     if (uistat.value != 4321)
       return;
   }
-#endif // DISABLE_ULTRA_UNLOCK_CODE
+#endif  // DISABLE_ULTRA_UNLOCK_CODE
   config.ultra = !config.ultra;
   config_save();
   reset_settings(M_LOW);
@@ -3020,7 +3074,7 @@ static UI_FUNCTION_CALLBACK(menu_clearconfig_cb)
     redraw_request|= REDRAW_AREA;
     return;
   }
-#endif // DISABLE_CLEAR_UNLOCK_CODE
+#endif  // DISABLE_CLEAR_UNLOCK_CODE
   clear_all_config_prop_data();
 #ifndef TINYSA4
 #define SCB_AIRCR_VECTKEYSTAT_LSB 16
@@ -3066,7 +3120,7 @@ static UI_FUNCTION_ADV_CALLBACK(menu_measure_acb)
       TRACE_DISABLE(TRACE_STORED_FLAG);
     }
     set_average(0,AV_OFF);
-    set_external_gain(0.0);
+//    set_external_gain(0.0);
 #ifdef TINYSA4
     set_extra_lna(false);
 #endif
@@ -4595,6 +4649,7 @@ static const menuitem_t  menu_modulation[] = {
   { MT_FORM | MT_ADV_CALLBACK | MT_LOW, MO_EXTERNAL,MT_CUSTOM_LABEL,    menu_modulation_acb},
   { MT_FORM | MT_KEYPAD,   KM_MODULATION,           "FREQ: %s",         "1Hz..5kHz"},
 #endif
+  { MT_FORM | MT_ADV_CALLBACK, 0,                   "Level in dBuV", menu_level_in_dBuV},
   { MT_FORM | MT_NONE, 0, NULL, menu_back} // next-> menu_back
 };
 
@@ -5121,6 +5176,7 @@ static const menuitem_t menu_settings[] =
   { MT_ADV_CALLBACK,0,              "PROGRESS\nBAR",        menu_progress_bar_acb},
   { MT_ADV_CALLBACK,     0,         "DIRECT\nMODE",         menu_direct_acb},
   { MT_ADV_CALLBACK,     0,         "LINEAR\nAVERAGING",    menu_linear_averaging_acb},
+  { MT_ADV_CALLBACK,     0,         "AUDIO\nAGC",           menu_audio_agc_acb},
 #ifdef __HARMONIC__
   { MT_SUBMENU          ,0,         "HARMONIC",             menu_harmonic},
 #endif
@@ -5266,6 +5322,9 @@ static const menuitem_t menu_connection[] = {
 const menuitem_t menu_touch[] = {
   { MT_CALLBACK, CONFIG_MENUITEM_TOUCH_CAL,  "TOUCH CAL",  menu_config_cb},
   { MT_CALLBACK, CONFIG_MENUITEM_TOUCH_TEST, "TOUCH TEST", menu_config_cb},
+#ifdef TINYSA4
+  { MT_CALLBACK, CONFIG_MENUITEM_NOTEPAD, "DRAWPAD", menu_config_cb},
+#endif
   { MT_NONE, 0, NULL, menu_back} // next-> menu_back
 };
 
@@ -5669,19 +5728,31 @@ static void fetch_numeric_target(uint8_t mode)
       end_level = level_max();
     uistat.value += setting.external_gain;
     end_level += setting.external_gain;
+    char *u = "m";
+    float el = end_level;
+    if (setting.dBuV) {
+      u = "uV";
+      uistat.value += 107;
+      el += 107;
+    }
     if (setting.level_sweep != 0)
-      plot_printf(uistat.text, sizeof uistat.text, "%.1f to %.1fdBm", uistat.value, end_level);
+      plot_printf(uistat.text, sizeof uistat.text, "%.1f to %.1fdBm", uistat.value, el);
     else
 #ifdef TINYSA4
-      plot_printf(uistat.text, sizeof uistat.text, "%+.1fdBm %s", uistat.value, (setting.disable_correction?"Uncorrected":""));
+      plot_printf(uistat.text, sizeof uistat.text, "%+.1fdB%s %s", uistat.value, u, (setting.disable_correction?"Uncorrected":""));
 #else
-      plot_printf(uistat.text, sizeof uistat.text, "%+.1fdBm", uistat.value);
+      plot_printf(uistat.text, sizeof uistat.text, "%+.1fdB%s", uistat.value, u);
 #endif
     break;
   case KM_HIGHOUTLEVEL:
     uistat.value = get_level();           // compensation for dB offset during low output mode
     uistat.value += setting.external_gain;
-    plot_printf(uistat.text, sizeof uistat.text, "%+.1fdBm", uistat.value);
+    char *unit = "m";
+    if (setting.dBuV) {
+      unit = "uV";
+      uistat.value += 107;
+    }
+    plot_printf(uistat.text, sizeof uistat.text, "%+.1fdB%s", uistat.value, unit);
     break;
   case KM_DECAY:
     uistat.value = setting.decay;
@@ -5945,9 +6016,13 @@ set_numeric_value(void)
     set_repeat(uistat.value);
     break;
   case KM_LOWOUTLEVEL:
+    if (setting.dBuV)
+      uistat.value -= 107;
     set_level(uistat.value - setting.external_gain);
     break;
   case KM_HIGHOUTLEVEL:
+    if (setting.dBuV)
+      uistat.value -= 107;
     set_level(uistat.value - setting.external_gain);
     break;
   case KM_DECAY:
@@ -7249,7 +7324,6 @@ menu_select_touch(const menuitem_t * m, int i, int pos)
     while (touch_check() != EVT_TOUCH_NONE){
       touch_position(&touch_x, &touch_y);
       if (abs(touch_x -  prev_touch_x) < 2) continue;
-
       fetch_numeric_target(keypad);
       int new_slider = touch_x - LCD_WIDTH/2;   // Can have negative outcome
       if (new_slider < - (MENU_FORM_WIDTH-8)/2 - 1)
@@ -7315,7 +7389,10 @@ menu_select_touch(const menuitem_t * m, int i, int pos)
         chThdSleepMilliseconds(100);
       } else if (keypad == KM_LOWOUTLEVEL) {
         uistat.value =  setting.external_gain + ((touch_x - OFFSETX+4) * level_range() ) / (MENU_FORM_WIDTH-8) + level_min() ;
+        bool old_dBuV = setting.dBuV;
+        setting.dBuV = false;
         set_keypad_value(keypad);
+        setting.dBuV = old_dBuV;;
         draw_menu_mask(1<<i);
         perform(false, 0, get_sweep_frequency(ST_CENTER), false);
       } else if (keypad == KM_HIGHOUTLEVEL) {
@@ -7361,7 +7438,10 @@ menu_select_touch(const menuitem_t * m, int i, int pos)
       check_frequency_slider(uistat.freq_value);
     }
     if (do_exit){
+      bool old_dBuV = setting.dBuV;
+      setting.dBuV = false;
       set_keypad_value(keypad);
+      setting.dBuV = old_dBuV;;
       selection = -1;
       draw_menu_mask(1<<i);
       perform(false, 0, get_sweep_frequency(ST_CENTER), false);
@@ -7547,6 +7627,7 @@ lever_move_marker(int status)
       markers[active_marker].frequency = getFrequency(idx);
       redraw_marker(active_marker);
       markers[active_marker].mtype &= ~M_TRACKING;    // Disable tracking when dragging marker
+
       #ifdef SA5_ULTRA
       step += 3;
       #else
@@ -7731,7 +7812,8 @@ ui_process_menu_lever(void)
         return;
 #ifdef SA5_ULTRA
       } else {
-        if (status & EVT_UP  ) selection--;
+        if (status & EVT_UP) selection--;
+
         if (status & EVT_DOWN) selection++;
       }
     } else {

@@ -71,10 +71,10 @@
 #define GPIO_LNA                8
 #define LINE_LNA                PAL_LINE(GPIOA, GPIO_LNA)
 #define GPIOA_BATT_CHG_STATE    9
-// #define GPIO_UART_TX            9
-// #define GPIO_UART_TX_PORT       GPIOA
-// #define GPIO_UART_RX            10
-// #define GPIO_UART_RX_PORT       GPIOA
+// #define GPIO_UART_TX         9
+// #define GPIO_UART_TX_PORT    GPIOA
+// #define GPIO_UART_RX         10
+// #define GPIO_UART_RX_PORT    GPIOA
 #define GPIOA_USB_DM            11
 #define GPIOA_USB_DP            12
 #define GPIOA_JTMS              13
